@@ -81,10 +81,6 @@ safe_handle(Payload) ->
 publish_response(_Chan, undefined, _CorrId, _Resp) ->
     ok;
 publish_response(Chan, ReplyTo, CorrId, Resp) ->
-    logger:info(
-        "Outgoing RPC response payload=~ts content_type=application/json routing_key=~ts reply_to=~ts correlation_id=~ts",
-        [to_printable(Resp), to_printable(ReplyTo), to_printable(ReplyTo), to_printable(CorrId)]
-    ),
     Props = #'P_basic'{
         content_type = <<"application/json">>,
         correlation_id = CorrId
@@ -93,6 +89,10 @@ publish_response(Chan, ReplyTo, CorrId, Resp) ->
         Chan,
         #'basic.publish'{exchange = <<>>, routing_key = ReplyTo},
         #amqp_msg{props = Props, payload = Resp}
+    ),
+    logger:info(
+        "Outgoing RPC response payload=~ts content_type=application/json reply_to=~ts correlation_id=~ts",
+        [to_printable(Resp), to_printable(ReplyTo), to_printable(CorrId)]
     ).
 
 maybe_connect(State) ->
