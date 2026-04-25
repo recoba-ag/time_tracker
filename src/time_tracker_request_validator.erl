@@ -20,27 +20,32 @@ validate(<<"/card/touch">>, Params) ->
     <<"card_uid">> => [required, string]
   },
   liver:validate(Schema, Params, #{return => map});
+
 validate(<<"/card/assign">>, Params) ->
   Schema = #{
     <<"user_id">> => [required, positive_integer],
     <<"card_uid">> => [required, string]
   },
   liver:validate(Schema, Params, #{return => map});
+
 validate(<<"/card/delete">>, Params) ->
   Schema = #{
     <<"card_uid">> => [required, string]
   },
   liver:validate(Schema, Params, #{return => map});
+
 validate(<<"/card/list_by_user">>, Params) ->
   Schema = #{
     <<"user_id">> => [required, positive_integer]
   },
   liver:validate(Schema, Params, #{return => map});
+
 validate(<<"/card/delete_all_by_user">>, Params) ->
   Schema = #{
     <<"user_id">> => [required, positive_integer]
   },
   liver:validate(Schema, Params, #{return => map});
+
 validate(<<"/work_time/set">>, Params) ->
   Schema = #{
     <<"user_id">> => [required, positive_integer],
@@ -50,11 +55,13 @@ validate(<<"/work_time/set">>, Params) ->
     <<"free_schedule">> => [required, string]
   },
   liver:validate(Schema, Params, #{return => map});
+
 validate(<<"/work_time/get">>, Params) ->
   Schema = #{
     <<"user_id">> => [required, positive_integer]
   },
   liver:validate(Schema, Params, #{return => map});
+
 validate(<<"/work_time/add_exclusion">>, Params) ->
   Schema = #{
     <<"user_id">> => [required, positive_integer],
@@ -63,31 +70,37 @@ validate(<<"/work_time/add_exclusion">>, Params) ->
     <<"end_datetime">> => [required, string]
   },
   liver:validate(Schema, Params, #{return => map});
+
 validate(<<"/work_time/get_exclusion">>, Params) ->
   Schema = #{
     <<"user_id">> => [required, positive_integer]
   },
   liver:validate(Schema, Params, #{return => map});
+
 validate(<<"/work_time/history_by_user">>, Params) ->
   Schema = #{
     <<"user_id">> => [required, positive_integer]
   },
   liver:validate(Schema, Params, #{return => map});
+
 validate(<<"/work_time/history">>, Params) ->
   Schema = #{
     <<"limit">> => [required, positive_integer]
   },
   liver:validate(Schema, Params, #{return => map});
+
 validate(<<"/work_time/statistics_by_user">>, Params) ->
   Schema = #{
     <<"user_id">> => [required, positive_integer],
     <<"period">> => [required, {one_of, [[<<"weak">>, <<"month">>, <<"year">>, <<"all">>]]}]
   },
   liver:validate(Schema, Params, #{return => map});
+
 validate(<<"/work_time/statistics">>, Params) ->
   Schema = #{
     <<"limit">> => [required, positive_integer]
   },
   liver:validate(Schema, Params, #{return => map});
+
 validate(_, _) ->
   {error, <<"invalid method">>}.
