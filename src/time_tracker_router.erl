@@ -3,7 +3,7 @@
 -export([handle_request/1]).
 
 handle_request(Payload) ->
-    case time_tracker_json:decode(Payload) of
+    case time_tracker_decoder:decode(Payload) of
         {ok, Data} ->
             Result =
                 case time_tracker_request_validator:validate(Data) of

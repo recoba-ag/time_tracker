@@ -44,7 +44,7 @@ handle_info({#'basic.deliver'{delivery_tag = Tag, routing_key = RoutingKey},
             #state{chan = Chan} = State) when ContentType =:= <<"application/json">> ->
     log_incoming_request(Payload, ContentType, RoutingKey, ReplyTo, CorrId),
     RespMap = safe_handle(Payload),
-    Resp = time_tracker_json:encode(RespMap),
+    Resp = time_tracker_decoder:encode(RespMap),
     publish_response(Chan, ReplyTo, CorrId, Resp),
     amqp_channel:cast(Chan, #'basic.ack'{delivery_tag = Tag}),
     {noreply, State};
@@ -52,7 +52,7 @@ handle_info({#'basic.deliver'{delivery_tag = Tag, routing_key = RoutingKey},
              #amqp_msg{props = #'P_basic'{content_type = ContentType, reply_to = ReplyTo, correlation_id = CorrId}, payload = Payload}},
             #state{chan = Chan} = State) ->
     log_incoming_request(Payload, ContentType, RoutingKey, ReplyTo, CorrId),
-    RespErr = time_tracker_json:encode(#{
+    RespErr = time_tracker_decoder:encode(#{
         status => error,
         error => #{code => validation_error, message => <<"Content-Type must be application/json">>}
     }),

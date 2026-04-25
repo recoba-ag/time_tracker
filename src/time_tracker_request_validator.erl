@@ -52,7 +52,7 @@ validate(<<"/work_time/set">>, Params) ->
     <<"start_time">> => [required, string],
     <<"end_time">> => [required, string],
     <<"days">> => [required, positive_integer],
-    <<"free_schedule">> => [required, string]
+    <<"free_schedule">> => [{one_of, [[<<"true">>, <<"false">>]]}]
   },
   liver:validate(Schema, Params, #{return => map});
 
@@ -92,7 +92,7 @@ validate(<<"/work_time/history">>, Params) ->
 validate(<<"/work_time/statistics_by_user">>, Params) ->
   Schema = #{
     <<"user_id">> => [required, positive_integer],
-    <<"period">> => [required, {one_of, [[<<"weak">>, <<"month">>, <<"year">>, <<"all">>]]}]
+    <<"period">> => [{one_of, [[<<"weak">>, <<"month">>, <<"year">>, <<"all">>]]}, {default, <<"month">>}]
   },
   liver:validate(Schema, Params, #{return => map});
 

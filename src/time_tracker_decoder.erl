@@ -1,4 +1,4 @@
--module(time_tracker_json).
+-module(time_tracker_decoder).
 
 -export([decode/1, encode/1]).
 

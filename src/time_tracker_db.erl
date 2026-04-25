@@ -38,13 +38,25 @@ init([]) ->
 handle_call(_Req, _From, #state{conn = undefined} = State) ->
     {reply, {error, db_unavailable}, State};
 handle_call({query, Sql, Params}, _From, State) ->
-    {Reply, NewState} = with_reconnect(fun(Conn) -> epgsql:equery(Conn, Sql, Params) end, State),
+    {RawReply, NewState} =
+        with_reconnect(fun(Conn) -> epgsql:equery(Conn, Sql, Params) end, State),
+    Reply =
+        case RawReply of
+            {error, Reason} -> db_error(Reason);
+            _ -> rows_result(RawReply)
+        end,
     {reply, Reply, NewState};
 handle_call({execute, Sql, Params}, _From, State) ->
-    {Reply, NewState} = with_reconnect(fun(Conn) -> epgsql:equery(Conn, Sql, Params) end, State),
+    {RawReply, NewState} =
+        with_reconnect(fun(Conn) -> epgsql:equery(Conn, Sql, Params) end, State),
+    Reply =
+        case RawReply of
+            {error, Reason} -> db_error(Reason);
+            _ -> exec_result(RawReply)
+        end,
     {reply, Reply, NewState};
 handle_call(_, _, State) ->
-    {reply, {error, bad_request}, State}.
+    {reply, {error, db_error, <<"Bad request">>}, State}.
 
 handle_cast(_Msg, State) ->
     {noreply, State}.
@@ -152,3 +164,29 @@ env_or_default_int(Name, Default) ->
                 _:_ -> Default
             end
     end.
+
+db_error(Reason) ->
+    logger:error("Database error: ~p", [Reason]),
+    {error, internal_error, <<"Database operation failed">>}.
+
+rows_result({ok, _Count, _Cols, Rows}) when is_list(Rows) ->
+    {ok, Rows};
+rows_result({ok, _Count, Rows}) when is_list(Rows) ->
+    {ok, Rows};
+rows_result({ok, _Count}) ->
+    {ok, []};
+rows_result({error, _} = Error) ->
+    Error;
+rows_result(Other) ->
+    {error, {unexpected_db_result, Other}}.
+
+exec_result({ok, _Count, _Cols, _Rows}) ->
+    ok;
+exec_result({ok, _Count, _Rows}) ->
+    ok;
+exec_result({ok, _Count}) ->
+    ok;
+exec_result({error, _} = Error) ->
+    Error;
+exec_result(Other) ->
+    {error, {unexpected_db_result, Other}}.
