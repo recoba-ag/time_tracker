@@ -2,7 +2,7 @@ FROM erlang:27-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache make bash
+RUN apk add --no-cache make bash git
 
 COPY . .
 

@@ -238,7 +238,7 @@ fmt_datetime({Date, Time}) ->
 
 db_error(Reason) ->
     logger:error("Database error: ~p", [Reason]),
-    {error, internal_error, <<"Database operation failed">>}.
+    {error, db_error, <<"Database operation failed">>}.
 
 rows_result({ok, _Count, _Cols, Rows}) when is_list(Rows) ->
     {ok, Rows};
