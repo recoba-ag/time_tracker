@@ -1,0 +1,154 @@
+-module(time_tracker_db).
+
+-behaviour(gen_server).
+
+-export([start_link/0, query/2, query/3, execute/2, execute/3]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, handle_continue/2]).
+
+-record(state, {
+    conn = undefined,
+    cfg = #{},
+    backoff_ms = 2000
+}).
+
+-define(SERVER, ?MODULE).
+-define(RECONNECT, reconnect).
+
+start_link() ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+
+query(Sql, Params) ->
+    query(Sql, Params, 5000).
+
+query(Sql, Params, Timeout) ->
+    gen_server:call(?SERVER, {query, Sql, Params}, Timeout).
+
+execute(Sql, Params) ->
+    execute(Sql, Params, 5000).
+
+execute(Sql, Params, Timeout) ->
+    gen_server:call(?SERVER, {execute, Sql, Params}, Timeout).
+
+init([]) ->
+    process_flag(trap_exit, true),
+    Cfg = pg_config(),
+    Backoff = reconnect_backoff_ms(),
+    {ok, #state{cfg = Cfg, backoff_ms = Backoff}, {continue, connect}}.
+
+handle_call(_Req, _From, #state{conn = undefined} = State) ->
+    {reply, {error, db_unavailable}, State};
+handle_call({query, Sql, Params}, _From, State) ->
+    {Reply, NewState} = with_reconnect(fun(Conn) -> epgsql:equery(Conn, Sql, Params) end, State),
+    {reply, Reply, NewState};
+handle_call({execute, Sql, Params}, _From, State) ->
+    {Reply, NewState} = with_reconnect(fun(Conn) -> epgsql:equery(Conn, Sql, Params) end, State),
+    {reply, Reply, NewState};
+handle_call(_, _, State) ->
+    {reply, {error, bad_request}, State}.
+
+handle_cast(_Msg, State) ->
+    {noreply, State}.
+
+handle_info({'EXIT', Conn, Reason}, #state{conn = Conn} = State) ->
+    logger:error("PostgreSQL connection lost: ~p", [Reason]),
+    schedule_reconnect(State),
+    {noreply, State#state{conn = undefined}};
+handle_info(?RECONNECT, State) ->
+    {noreply, maybe_connect(State)};
+handle_info(_, State) ->
+    {noreply, State}.
+
+terminate(_Reason, #state{conn = undefined}) ->
+    ok;
+terminate(_Reason, #state{conn = Conn}) ->
+    catch epgsql:close(Conn),
+    ok.
+
+handle_continue(connect, State) ->
+    {noreply, maybe_connect(State)}.
+
+maybe_connect(#state{cfg = Cfg} = State) ->
+    Opts = [
+        {host, maps:get(host, Cfg)},
+        {port, maps:get(port, Cfg)},
+        {username, maps:get(username, Cfg)},
+        {password, maps:get(password, Cfg)},
+        {database, maps:get(database, Cfg)},
+        {timeout, 5000}
+    ],
+    case epgsql:connect(Opts) of
+        {ok, Conn} ->
+            link(Conn),
+            case catch time_tracker_db_schema:ensure(Conn) of
+                ok ->
+                    logger:info("Connected to PostgreSQL"),
+                    State#state{conn = Conn};
+                {'EXIT', Reason} ->
+                    logger:error("Schema initialization failed: ~p", [Reason]),
+                    catch epgsql:close(Conn),
+                    schedule_reconnect(State),
+                    State#state{conn = undefined}
+            end;
+        {error, Reason} ->
+            logger:error("Failed to connect PostgreSQL: ~p", [Reason]),
+            schedule_reconnect(State),
+            State#state{conn = undefined}
+    end.
+
+with_reconnect(Fun, #state{conn = Conn} = State) when Conn =/= undefined ->
+    try
+        {Fun(Conn), State}
+    catch
+        exit:Reason ->
+            logger:error("DB query failed, dropping connection: ~p", [Reason]),
+            schedule_reconnect(State),
+            {{error, db_unavailable}, State#state{conn = undefined}}
+    end.
+
+schedule_reconnect(#state{backoff_ms = Backoff}) ->
+    erlang:send_after(Backoff, self(), ?RECONNECT),
+    ok.
+
+pg_config() ->
+    Default = app_cfg(pg, #{
+        host => "postgres",
+        port => 5432,
+        username => "postgres",
+        password => "postgres",
+        database => "time_tracker"
+    }),
+    #{
+        host => env_or_default("PG_HOST", maps:get(host, Default)),
+        port => env_or_default_int("PG_PORT", maps:get(port, Default)),
+        username => env_or_default("PG_USER", maps:get(username, Default)),
+        password => env_or_default("PG_PASSWORD", maps:get(password, Default)),
+        database => env_or_default("PG_DATABASE", maps:get(database, Default))
+    }.
+
+reconnect_backoff_ms() ->
+    Default = app_cfg(reconnect_backoff_ms, 2000),
+    env_or_default_int("RECONNECT_BACKOFF_MS", Default).
+
+app_cfg(Key, Default) ->
+    case application:get_env(time_tracker, Key) of
+        {ok, Value} -> Value;
+        undefined -> Default
+    end.
+
+env_or_default(Name, Default) ->
+    case os:getenv(Name) of
+        false -> Default;
+        Value -> Value
+    end.
+
+env_or_default_int(Name, Default) ->
+    case os:getenv(Name) of
+        false ->
+            Default;
+        Value ->
+            try list_to_integer(Value) of
+                Int -> Int
+            catch
+                _:_ -> Default
+            end
+    end.
