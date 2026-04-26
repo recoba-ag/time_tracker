@@ -56,7 +56,7 @@ validate(<<"/work_time/set">>, Params) ->
   },
   case liver:validate(Schema, Params, #{return => map}) of
     {ok, Args} ->
-      validate_work_time_times(Args);
+      validate_work_time(Args);
     {error, _} = Error ->
       Error
   end;
@@ -71,10 +71,15 @@ validate(<<"/work_time/add_exclusion">>, Params) ->
   Schema = #{
     <<"user_id">> => [required, positive_integer],
     <<"type_exclusion">> => [required, {one_of, [[<<"come later">>, <<"leave earlier">>, <<"full day">>]]}],
-    <<"start_datetime">> => [required, {iso_date, #{format => datetime}}],
-    <<"end_datetime">> => [required, {iso_date, #{format => datetime}}]
+    <<"start_datetime">> => [required, string],
+    <<"end_datetime">>   => [required, string]
   },
-  liver:validate(Schema, Params, #{return => map});
+  case liver:validate(Schema, Params, #{return => map}) of
+    {ok, Args} ->
+      validate_exclusion_dt(Args);
+    {error, _} = Error ->
+      Error
+  end;
 
 validate(<<"/work_time/get_exclusion">>, Params) ->
   Schema = #{
@@ -110,10 +115,10 @@ validate(<<"/work_time/statistics">>, Params) ->
 validate(_, _) ->
   {error, <<"invalid method">>}.
 
-validate_work_time_times(Args) ->
+validate_work_time(Args) ->
   StartTime = maps:get(<<"start_time">>, Args),
   EndTime = maps:get(<<"end_time">>, Args),
-  case {parse_time(StartTime), parse_time(EndTime)} of
+  case {time_tracker_time:parse_time(StartTime), time_tracker_time:parse_time(EndTime)} of
     {{ok, StartNorm}, {ok, EndNorm}} ->
       {ok, Args#{<<"start_time">> => StartNorm, <<"end_time">> => EndNorm}};
     {error, _} ->
@@ -122,30 +127,22 @@ validate_work_time_times(Args) ->
       {error, #{<<"end_time">> => <<"INVALID_TIME">>}}
   end.
 
-parse_time(<<H:2/binary, ":", M:2/binary, ":", S:2/binary>>) ->
-  case {to_int(H), to_int(M), to_int(S)} of
-    {Hh, Mm, Ss} when
-      Hh >= 0, Hh < 24,
-      Mm >= 0, Mm < 60,
-      Ss >= 0, Ss < 60 ->
-      {ok, {Hh, Mm, Ss}};
-    _ ->
-      error
-  end;
-parse_time(<<H:2/binary, ":", M:2/binary>>) ->
-  case {to_int(H), to_int(M)} of
-    {Hh, Mm} when
-      Hh >= 0, Hh < 24,
-      Mm >= 0, Mm < 60 ->
-      {ok, {Hh, Mm, 0}};
-    _ ->
-      error
-  end;
-parse_time(_) ->
-  error.
-
-to_int(B) ->
-  case catch binary_to_integer(B) of
-    I when is_integer(I) -> I;
-    _ -> -1
+validate_exclusion_dt(Args) ->
+  StartBin = maps:get(<<"start_datetime">>, Args),
+  EndBin   = maps:get(<<"end_datetime">>, Args),
+  case {time_tracker_time:parse_iso8601(StartBin), time_tracker_time:parse_iso8601(EndBin)} of
+    {{ok, StartDT}, {ok, EndDT}} ->
+      case StartDT =< EndDT of
+        true ->
+          {ok, Args#{
+            <<"start_datetime">> => StartDT,
+            <<"end_datetime">>   => EndDT
+          }};
+        false ->
+          {error, #{<<"range">> => <<"END_BEFORE_START">>}}
+      end;
+    {error, _} ->
+      {error, #{<<"start_datetime">> => <<"INVALID_ISO8601">>}};
+    {_, error} ->
+      {error, #{<<"end_datetime">> => <<"INVALID_ISO8601">>}}
   end.
