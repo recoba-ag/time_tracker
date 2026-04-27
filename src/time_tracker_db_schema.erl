@@ -4,7 +4,7 @@
 
 ensure(Conn) ->
     Statements = load_schema_statements(),
-    Fun =
+    RunStatement =
         fun(Sql) ->
             case epgsql:squery(Conn, Sql) of
                 {ok, _, _} -> ok;
@@ -12,7 +12,7 @@ ensure(Conn) ->
                 Other -> error({schema_error, Other})
             end
         end,
-    lists:foreach(Fun, Statements),
+    lists:foreach(RunStatement, Statements),
     ok.
 
 load_schema_statements() ->

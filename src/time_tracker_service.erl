@@ -287,46 +287,46 @@ epoch_to_gregorian(EpochSec) ->
     EpochStart + EpochSec.
 
 schedule_map(Rows) ->
-    Fun =
+    AddUserScheduleToMap =
         fun({Uid, S, E, D, F}, M) when is_integer(Uid) ->
             case time_tracker_attendance:parse_schedule({S, E, D, F}) of
                 {ok, P} -> M#{Uid => P};
                 {error, _} -> M#{Uid => undefined}
             end
         end,
-    lists:foldl(Fun, #{}, Rows).
+    lists:foldl(AddUserScheduleToMap, #{}, Rows).
 
 exclusions_by_user(Rows) ->
-    Fun =
+    PrependExclusionToUser =
         fun({UserId, ExclType, StartDt, EndDt}, ByUser) ->
             maps:update_with(UserId, fun(Rows0) -> [{ExclType, StartDt, EndDt} | Rows0] end, [{ExclType, StartDt, EndDt}], ByUser)
         end,
-    lists:foldl(Fun, #{}, Rows).
+    lists:foldl(PrependExclusionToUser, #{}, Rows).
 
 touches_by_user(Rows) ->
-    Fun =
+    PrependTouchToUser =
         fun({UserId, EventType, TouchedAt}, ByUser) ->
             maps:update_with(
                 UserId, fun(Events) -> [{EventType, TouchedAt} | Events] end, [{EventType, TouchedAt}], ByUser
             )
         end,
-    ByUserRaw = lists:foldl(Fun, #{}, Rows),
-    Fun1 =
+    ByUserRaw = lists:foldl(PrependTouchToUser, #{}, Rows),
+    BuildSortedTouchGsecPairsForUser =
         fun(_UserId, Unsorted) ->
             Sorted = lists:sort(
                 fun({_, TouchedA}, {_, TouchedB}) -> TouchedA =< TouchedB end, Unsorted
             ),
             time_tracker_attendance:build_touch_secs(Sorted)
         end,
-    maps:map(Fun1, ByUserRaw).
+    maps:map(BuildSortedTouchGsecPairsForUser, ByUserRaw).
 
 grouped_history_by_user(Rows) ->
-    GroupFun =
+    AppendEventToUserHistory =
         fun({UserId, CardUid, TouchedAt, EventType}, Acc) ->
             Event = #{card_uid => CardUid, touched_at => TouchedAt, event_type => EventType},
             maps:update_with(UserId, fun(Events) -> [Event | Events] end, [Event], Acc)
         end,
-    Grouped = lists:foldl(GroupFun, #{}, Rows),
+    Grouped = lists:foldl(AppendEventToUserHistory, #{}, Rows),
     UserIds = lists:sort(maps:keys(Grouped)),
     [#{user_id => UserId, history => lists:reverse(maps:get(UserId, Grouped))} || UserId <- UserIds].
 

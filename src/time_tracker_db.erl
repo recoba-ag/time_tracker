@@ -120,9 +120,9 @@ maybe_connect(#state{cfg = Cfg} = State) ->
             State#state{conn = undefined}
     end.
 
-with_reconnect(Fun, #state{conn = Conn} = State) when Conn =/= undefined ->
+with_reconnect(WithConnection, #state{conn = Conn} = State) when Conn =/= undefined ->
     try
-        {Fun(Conn), State}
+        {WithConnection(Conn), State}
     catch
         exit:Reason ->
             logger:error("DB query failed, dropping connection: ~p", [Reason]),

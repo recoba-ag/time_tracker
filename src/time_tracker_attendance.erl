@@ -43,7 +43,7 @@ normalize_days(WorkdayNumbers) when is_tuple(WorkdayNumbers) ->
 normalize_days(_) -> [].
 
 build_exclusion_secs(Rows) ->
-    Fun =
+    ExclRowToGsecTuple =
         fun({ExclType, StartDt, EndDt}) ->
             case
                 {time_tracker_time:datetime_to_gregorian(StartDt), time_tracker_time:datetime_to_gregorian(EndDt)}
@@ -52,10 +52,10 @@ build_exclusion_secs(Rows) ->
                 _ -> false
             end
         end,
-    lists:filtermap(Fun, Rows).
+    lists:filtermap(ExclRowToGsecTuple, Rows).
 
 build_touch_secs(Rows) ->
-    Fun =
+    TouchRowToGsecPair =
         fun({EventType, TouchedDt}) ->
             case time_tracker_time:datetime_to_gregorian(TouchedDt) of
                 {ok, TouchGsec} when EventType =:= <<"in">> -> {true, {TouchGsec, in}};
@@ -63,7 +63,7 @@ build_touch_secs(Rows) ->
                 _ -> false
             end
         end,
-    lists:sort(lists:filtermap(Fun, Rows)).
+    lists:sort(lists:filtermap(TouchRowToGsecPair, Rows)).
 
 -spec compute(
     {integer(), integer(), [1..7], boolean()} | undefined,
@@ -83,7 +83,7 @@ compute({SecFromMidnightStart, SecFromMidnightEnd, WorkdayNumbers, false},
     TouchesByWorkday = touches_by_workday(Touches, WindowStart, WindowEnd),
     {FirstDateInWindow, LastDateInWindow} = {date_ceil(WindowStart), date_floor(WindowEnd)},
     TodayDate = date_of_greg(NowGsec),
-    Fun =
+    StepOneWorkdayOnRange =
         fun(WorkdayDate, Accum) ->
             step(
                 WorkdayDate,
@@ -100,7 +100,7 @@ compute({SecFromMidnightStart, SecFromMidnightEnd, WorkdayNumbers, false},
             )
         end,
     DateRange = date_range(FirstDateInWindow, LastDateInWindow),
-    lists:foldl(Fun, empty(0), DateRange);
+    lists:foldl(StepOneWorkdayOnRange, empty(0), DateRange);
 compute(_Schedule, _ExclSecs, _Touches, _WindowStart, _WindowEnd) -> empty(0).
 
 empty(WorkedDaysInit) ->
@@ -113,7 +113,7 @@ empty(WorkedDaysInit) ->
     }.
 
 free_count(Touches, WindowStart, WindowEnd) ->
-    Fun =
+    CountInOrOutInWindow =
         fun
             ({TouchGsec, in}, {InAcc, OutAcc}) when
                 TouchGsec >= WindowStart, TouchGsec =< WindowEnd
@@ -125,11 +125,11 @@ free_count(Touches, WindowStart, WindowEnd) ->
                 {InAcc, OutAcc + 1};
             (_, Counts) -> Counts
         end,
-    {InCount, OutCount} = lists:foldl(Fun, {0, 0}, Touches),
+    {InCount, OutCount} = lists:foldl(CountInOrOutInWindow, {0, 0}, Touches),
     erlang:min(InCount, OutCount).
 
 touches_by_workday(Touches, WindowStart, WindowEnd) ->
-    Fun =
+    AddTouchToWorkdayMap =
         fun
             ({TouchGsec, InOrOut}, ByWorkday) when
                 TouchGsec >= WindowStart, TouchGsec =< WindowEnd
@@ -138,7 +138,7 @@ touches_by_workday(Touches, WindowStart, WindowEnd) ->
                 maps:update_with(Workday, fun(List) -> [{TouchGsec, InOrOut} | List] end, [{TouchGsec, InOrOut}], ByWorkday);
             (_, ByWorkday) -> ByWorkday
         end,
-    lists:foldl(Fun, #{}, Touches).
+    lists:foldl(AddTouchToWorkdayMap, #{}, Touches).
 
 date_of_greg(GregSec) -> element(1, calendar:gregorian_seconds_to_datetime(GregSec)).
 date_ceil(G) -> date_of_greg(G).
@@ -246,12 +246,12 @@ classify_late_only(FirstInGsec, ShiftStartGsec, _ShiftEndGsec, ExclSecs) when is
     {LateWithout, LateWith, 0, 0, 0}.
 
 full_covers_work(ShiftStartGsec, ShiftEndGsec, ExclSecs) ->
-    Fun =
+    FullExclSpansEntireShift =
         fun
             ({?EX_FULL, SpanStart, SpanEnd}) when SpanStart =< ShiftStartGsec, SpanEnd >= ShiftEndGsec -> true;
             (_) -> false
         end,
-    lists:any(Fun, ExclSecs).
+    lists:any(FullExclSpansEntireShift, ExclSecs).
 
 first_in_gsec(Sorted) ->
     case [Gsec || {Gsec, in} <- Sorted] of
@@ -270,22 +270,22 @@ last_out_gsec(Sorted) ->
     end.
 
 come_covered(FirstInGsec, ShiftStartGsec, ExclSecs) when is_integer(FirstInGsec) ->
-    Fun =
+    ComeExclContainsFirstIn =
         fun
             ({?EX_COME, ExclStart, ExclEnd}) when ExclStart =< FirstInGsec, FirstInGsec =< ExclEnd -> true;
             (_) -> false
         end,
-    (FirstInGsec =< ShiftStartGsec) orelse lists:any(Fun, ExclSecs);
+    (FirstInGsec =< ShiftStartGsec) orelse lists:any(ComeExclContainsFirstIn, ExclSecs);
 come_covered(_FirstIn, _ShiftStart, _Excl) ->
     false.
 
 leave_covered(LastOutGsec, ShiftEndGsec, ExclSecs) when is_integer(LastOutGsec) ->
-    Fun =
+    LeaveExclContainsLastOut =
         fun
             ({?EX_LEAVE, ExclStart, ExclEnd}) when ExclStart =< LastOutGsec, LastOutGsec =< ExclEnd -> true;
             (_) -> false
         end,
-    (LastOutGsec >= ShiftEndGsec) orelse lists:any(Fun, ExclSecs);
+    (LastOutGsec >= ShiftEndGsec) orelse lists:any(LeaveExclContainsLastOut, ExclSecs);
 leave_covered(_LastOut, _ShiftEnd, _Excl) ->
     false.
 
