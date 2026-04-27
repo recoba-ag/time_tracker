@@ -12,10 +12,8 @@
 -export_type([period/0, hms/0, parse_error/0, gregorian_sec/0]).
 
 -type period() :: week | month | year | all.
-%% Hour / minute / second of day; values validated at parse time.
 -type hms() :: {0..23, 0..59, 0..59}.
 -type parse_error() :: error.
-%% Gregorian seconds (Erlang calendar:datetime_to_gregorian_seconds/1 convention).
 -type gregorian_sec() :: non_neg_integer().
 
 -spec period_start(period()) -> gregorian_sec().
