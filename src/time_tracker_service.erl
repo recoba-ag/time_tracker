@@ -19,11 +19,13 @@
 ]).
 
 assign_card(UserId, CardUid) ->
-    case time_tracker_db:query(?ASSIGN_CARD, [UserId, CardUid]) of
+    AssignRes = time_tracker_db:query(?ASSIGN_CARD, [UserId, CardUid]),
+    case AssignRes of
         {ok, [{DbUserId, DbCardUid}]} ->
             {ok, #{card_uid => DbCardUid, user_id => DbUserId}};
         {ok, []} ->
-            case time_tracker_db:query(?CHECK_ASSIGNED_CARD, [CardUid]) of
+            CheckRes = time_tracker_db:query(?CHECK_ASSIGNED_CARD, [CardUid]),
+            case CheckRes of
                 {ok, [{UserId, DbCardUid}]} ->
                     {ok, #{card_uid => DbCardUid, user_id => UserId}};
                 {ok, [{_ExistingUserId, _DbCardUid}]} ->
@@ -42,7 +44,8 @@ assign_card(UserId, CardUid) ->
     end.
 
 delete_card(CardUid) ->
-    case time_tracker_db:query(?DELETE_CARD, [CardUid]) of
+    DeleteRes = time_tracker_db:query(?DELETE_CARD, [CardUid]),
+    case DeleteRes of
         {ok, [{UserId, DbCardUid}]} ->
             {ok, #{card_uid => DbCardUid, user_id => UserId}};
         {ok, []} ->
@@ -52,7 +55,8 @@ delete_card(CardUid) ->
     end.
 
 list_cards_by_user(UserId) ->
-    case time_tracker_db:query(?GET_CARDS_BY_USER, [UserId]) of
+    GetRes = time_tracker_db:query(?GET_CARDS_BY_USER, [UserId]),
+    case GetRes of
         {ok, Rows} ->
             Cards = [CardUid || {CardUid} <- Rows],
             {ok, #{user_id => UserId, cards => Cards}};
@@ -61,7 +65,8 @@ list_cards_by_user(UserId) ->
     end.
 
 delete_all_cards_by_user(UserId) ->
-    case time_tracker_db:query(?DELETE_ALL_USER_CARDS, [UserId]) of
+    DeleteRes = time_tracker_db:query(?DELETE_ALL_USER_CARDS, [UserId]),
+    case DeleteRes of
         {ok, Rows} ->
             Cards = [CardUid || {CardUid} <- Rows],
             {ok, #{user_id => UserId, cards => Cards}};
@@ -70,7 +75,8 @@ delete_all_cards_by_user(UserId) ->
     end.
 
 touch_card(CardUid) ->
-    case time_tracker_db:query(?GET_USER_BY_CARD, [CardUid]) of
+    GetUserRes = time_tracker_db:query(?GET_USER_BY_CARD, [CardUid]),
+    case GetUserRes of
         {ok, [{UserId}]} ->
             EventType = next_event_type(UserId),
             case time_tracker_db:execute(?TOUCH_CARD, [UserId, CardUid, EventType]) of
@@ -86,7 +92,8 @@ touch_card(CardUid) ->
     end.
 
 set_work_time(UserId, StartTime, EndTime, Days, Free) ->
-    case time_tracker_db:execute(?SET_USER_WORK_TIME, [UserId, StartTime, EndTime, Days, Free]) of
+    SetWorkTimeRes = time_tracker_db:execute(?SET_USER_WORK_TIME, [UserId, StartTime, EndTime, Days, Free]),
+    case SetWorkTimeRes of
         ok ->
             {ok, #{user_id => UserId}};
         {error, _Code, _Reason} = Error ->
@@ -94,7 +101,8 @@ set_work_time(UserId, StartTime, EndTime, Days, Free) ->
     end.
 
 get_work_time(UserId) ->
-    case time_tracker_db:query(?GET_USER_WORK_TIME, [UserId]) of
+    UserWorkTime = time_tracker_db:query(?GET_USER_WORK_TIME, [UserId]),
+    case UserWorkTime of
         {ok, [{StartTime, EndTime, Days, Free}]} ->
             {ok, #{
                 user_id => UserId,
@@ -110,7 +118,8 @@ get_work_time(UserId) ->
     end.
 
 add_exclusion(UserId, Type, StartDt, EndDt) ->
-    case time_tracker_db:execute(?ADD_USER_EXCLUSION, [UserId, Type, StartDt, EndDt]) of
+    AddRes = time_tracker_db:execute(?ADD_USER_EXCLUSION, [UserId, Type, StartDt, EndDt]),
+    case AddRes of
         ok ->
             {ok, #{user_id => UserId}};
         {error, _Code, _Reason} = Error ->
@@ -118,16 +127,21 @@ add_exclusion(UserId, Type, StartDt, EndDt) ->
     end.
 
 get_exclusion(UserId) ->
-    case time_tracker_db:query(?GET_USER_EXCLUSION, [UserId]) of
+    GetExclusionRes = time_tracker_db:query(?GET_USER_EXCLUSION, [UserId]),
+    case GetExclusionRes of
         {ok, Rows} ->
-            Ex = [#{type_exclusion => T, start_datetime => S, end_datetime => E} || {T, S, E} <- Rows],
+            Ex = [
+                #{type_exclusion => ExclType, start_datetime => StartDt, end_datetime => EndDt}
+             || {ExclType, StartDt, EndDt} <- Rows
+            ],
             {ok, #{user_id => UserId, exclusions => Ex}};
         {error, _Code, _Reason} = Error ->
             Error
     end.
 
 history_by_user(UserId) ->
-    case time_tracker_db:query(?GET_HISTORY_BY_USER, [UserId]) of
+    GetHistoryRes = time_tracker_db:query(?GET_HISTORY_BY_USER, [UserId]),
+    case GetHistoryRes of
         {ok, Rows} ->
             Hist = [#{card_uid => C, touched_at => T, event_type => E} || {C, T, E} <- Rows],
             {ok, #{user_id => UserId, history => Hist}};
@@ -136,7 +150,8 @@ history_by_user(UserId) ->
     end.
 
 history(Limit) ->
-    case time_tracker_db:query(?GET_HISTORY, [Limit]) of
+    GetHistoryRes = time_tracker_db:query(?GET_HISTORY, [Limit]),
+    case GetHistoryRes of
         {ok, Rows} ->
             GroupedHist = grouped_history_by_user(Rows),
             {ok, #{history => GroupedHist}};
@@ -145,35 +160,165 @@ history(Limit) ->
     end.
 
 statistics_by_user(UserId, PeriodBin) ->
-    StartSec = time_tracker_time:period_start(period_atom(PeriodBin)),
-    StartDt = calendar:gregorian_seconds_to_datetime(StartSec),
-    StartText = fmt_datetime(StartDt),
-    case time_tracker_db:query(?GET_STATISTICS_BY_USER, [UserId, StartText]) of
-        {ok, Rows} ->
-            InCnt = count_event(<<"in">>, Rows),
-            OutCnt = count_event(<<"out">>, Rows),
-            Stats = #{
-                user_id => UserId,
-                period => PeriodBin,
-                worked_days => erlang:min(InCnt, OutCnt),
-                late_without_reason => 0,
-                late_with_reason => 0,
-                early_without_reason => 0,
-                early_with_reason => 0
-            },
-            {ok, Stats};
-        {error, _Code, _Reason} = Error ->
-            Error
+    NowGsec = time_tracker_time:now_gregorian_sec(),
+    WindowStartGsec = period_t_start(period_atom(PeriodBin), UserId, NowGsec),
+    WindowStartDt = calendar:gregorian_seconds_to_datetime(WindowStartGsec),
+    WindowEndDt = calendar:gregorian_seconds_to_datetime(NowGsec),
+    GetWorkTimeRes = time_tracker_db:query(?GET_USER_WORK_TIME, [UserId]),
+    case GetWorkTimeRes of
+        {ok, [Row]} ->
+            Schedule = time_tracker_attendance:parse_schedule(Row),
+            case Schedule of
+                {ok, Sch} ->
+                    GetUserExclusionsRes = time_tracker_db:query(?GET_EXCLUSIONS_FOR_USER_IN_RANGE, [UserId, WindowStartDt, WindowEndDt]),
+                    GetUserTouchesRes = time_tracker_db:query(?GET_TOUCHES_FOR_USER_IN_RANGE, [UserId, WindowStartDt, WindowEndDt]),
+                    case {GetUserExclusionsRes, GetUserTouchesRes} of
+                        {{ok, ExRows}, {ok, TRows}} when WindowStartGsec =< NowGsec ->
+                            Stats = time_tracker_attendance:compute(
+                                Sch,
+                                time_tracker_attendance:build_exclusion_secs(ExRows),
+                                time_tracker_attendance:build_touch_secs(TRows),
+                                WindowStartGsec,
+                                NowGsec
+                            ),
+                            {ok, Stats#{user_id => UserId, period => PeriodBin}};
+                        {{error, _C, _M} = E, _} ->
+                            E;
+                        {_, {error, _C, _M} = E} ->
+                            E;
+                        _ when WindowStartGsec > NowGsec ->
+                            {ok, empty_stats_map(UserId, PeriodBin, 0)};
+                        _ ->
+                            {ok, empty_stats_map(UserId, PeriodBin, 0)}
+                    end;
+                {error, _} ->
+                    {ok, empty_stats_map(UserId, PeriodBin, 0)}
+            end;
+        {ok, []} ->
+            {ok, empty_stats_map(UserId, PeriodBin, 0)};
+        {error, _C, _M} = E ->
+            E
     end.
 
 statistics(Limit) ->
-    case time_tracker_db:query(?GET_STATISTICS, [Limit]) of
-        {ok, Rows} ->
-            Summary = [#{user_id => U, touches => Cnt} || {U, Cnt} <- Rows],
-            {ok, #{summary => Summary}};
-        {error, _Code, _Reason} = Error ->
-            Error
+    GetHistoryRes = time_tracker_db:query(?GET_HISTORY_EPOCH, [Limit]),
+    case GetHistoryRes of
+        {ok, []} ->
+            {ok, #{users => []}};
+        {ok, HRows} ->
+            TouchedGsecs = [ts_to_gsec(T) || {_, _, T} <- HRows, is_number(T)],
+            EarliestTouchedGsec = lists:min(TouchedGsecs),
+            LatestTouchedGsec = lists:max(TouchedGsecs),
+            UserIds0 = [UserId || {UserId, _, _} <- HRows],
+            UserIds = ordsets:from_list(UserIds0),
+            WindowStartGsec = EarliestTouchedGsec,
+            WindowEndGsec = LatestTouchedGsec,
+            WindowStartDt = calendar:gregorian_seconds_to_datetime(WindowStartGsec),
+            WindowEndDt = calendar:gregorian_seconds_to_datetime(WindowEndGsec),
+            UserIdList = ordsets:to_list(UserIds),
+            GetWorkSchedulesRes = time_tracker_db:query(?GET_WORK_SCHEDULES_FOR_USERS, [UserIdList]),
+            case GetWorkSchedulesRes of
+                {ok, SchRows} ->
+                    SchedulesByUser = schedule_map(SchRows),
+                    GetExclusionsRes = time_tracker_db:query(?GET_EXCLUSIONS_FOR_USERS_IN_RANGE, [UserIdList, WindowStartDt, WindowEndDt]),
+                    GetTouchesRes = time_tracker_db:query(?GET_TOUCHES_FOR_USERS_IN_RANGE, [UserIdList, WindowStartDt, WindowEndDt]),
+                    case {GetExclusionsRes, GetTouchesRes} of
+                        {{ok, ExclRowsAll}, {ok, TouchRowsAll}} when WindowStartGsec =< WindowEndGsec ->
+                            ExclusionsByUser = exclusions_by_user(ExclRowsAll),
+                            TouchesByUser = touches_by_user(TouchRowsAll),
+                            Users = [
+                                (time_tracker_attendance:compute(
+                                    maps:get(UserId, SchedulesByUser, undefined),
+                                    time_tracker_attendance:build_exclusion_secs(maps:get(UserId, ExclusionsByUser, [])),
+                                    maps:get(UserId, TouchesByUser, []),
+                                    WindowStartGsec,
+                                    WindowEndGsec
+                                )) #{user_id => UserId}
+                                || UserId <- UserIdList
+                            ],
+                            {ok, #{users => Users}};
+                        {{error, _C, _M} = E, _} ->
+                            E;
+                        {_, {error, _C, _M} = E} ->
+                            E
+                    end;
+                {error, _C, _M} = E ->
+                    E
+            end;
+        {error, _C, _M} = E ->
+            E
     end.
+
+empty_stats_map(UserId, PeriodBin, W) ->
+    #{
+        user_id => UserId,
+        period => PeriodBin,
+        late_without_reason => 0,
+        late_with_reason => 0,
+        early_without_reason => 0,
+        early_with_reason => 0,
+        worked_days => W
+    }.
+
+period_t_start(all, UserId, NowGsec) ->
+    GetTouchesRes = time_tracker_db:query(?GET_MIN_TOUCHED_AT_FOR_USER, [UserId]),
+    case GetTouchesRes of
+        {ok, [{MinTouchedAt}]} when MinTouchedAt =/= null ->
+            Time = time_tracker_time:datetime_to_gregorian(MinTouchedAt),
+            case Time of
+                {ok, FirstEventGsec} -> FirstEventGsec;
+                _ -> NowGsec
+            end;
+        _ ->
+            NowGsec
+    end;
+period_t_start(week, _UserId, _NowGsec) ->
+    max(time_tracker_time:period_start(week), 0);
+period_t_start(Period, _UserId, _NowGsec) ->
+    time_tracker_time:period_start(Period).
+
+ts_to_gsec(T) when is_float(T) ->
+    epoch_to_gregorian(erlang:round(T));
+ts_to_gsec(T) when is_integer(T) ->
+    epoch_to_gregorian(T).
+
+epoch_to_gregorian(EpochSec) ->
+    EpochStart = calendar:datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}}),
+    EpochStart + EpochSec.
+
+schedule_map(Rows) ->
+    Fun =
+        fun({Uid, S, E, D, F}, M) when is_integer(Uid) ->
+            case time_tracker_attendance:parse_schedule({S, E, D, F}) of
+                {ok, P} -> M#{Uid => P};
+                {error, _} -> M#{Uid => undefined}
+            end
+        end,
+    lists:foldl(Fun, #{}, Rows).
+
+exclusions_by_user(Rows) ->
+    Fun =
+        fun({UserId, ExclType, StartDt, EndDt}, ByUser) ->
+            maps:update_with(UserId, fun(Rows0) -> [{ExclType, StartDt, EndDt} | Rows0] end, [{ExclType, StartDt, EndDt}], ByUser)
+        end,
+    lists:foldl(Fun, #{}, Rows).
+
+touches_by_user(Rows) ->
+    Fun =
+        fun({UserId, EventType, TouchedAt}, ByUser) ->
+            maps:update_with(
+                UserId, fun(Events) -> [{EventType, TouchedAt} | Events] end, [{EventType, TouchedAt}], ByUser
+            )
+        end,
+    ByUserRaw = lists:foldl(Fun, #{}, Rows),
+    Fun1 =
+        fun(_UserId, Unsorted) ->
+            Sorted = lists:sort(
+                fun({_, TouchedA}, {_, TouchedB}) -> TouchedA =< TouchedB end, Unsorted
+            ),
+            time_tracker_attendance:build_touch_secs(Sorted)
+        end,
+    maps:map(Fun1, ByUserRaw).
 
 grouped_history_by_user(Rows) ->
     GroupFun =
@@ -191,18 +336,10 @@ period_atom(<<"year">>) -> year;
 period_atom(<<"all">>) -> all;
 period_atom(_) -> month.
 
-count_event(Type, Rows) ->
-    case lists:keyfind(Type, 1, Rows) of
-        false -> 0;
-        {_, Cnt} -> Cnt
-    end.
-
 next_event_type(UserId) ->
-    case time_tracker_db:query(?GET_NEXT_EVENT_TYPE_BY_USER, [UserId]) of
+    GetRes = time_tracker_db:query(?GET_NEXT_EVENT_TYPE_BY_USER, [UserId]),
+    case GetRes of
         {ok, [{<<"in">>}]} -> <<"out">>;
         {ok, [{<<"out">>}]} -> <<"in">>;
         _ -> <<"in">>
     end.
-
-fmt_datetime({Date, Time}) ->
-    lists:flatten(io_lib:format("~4..0B-~2..0B-~2..0BT~2..0B:~2..0B:~2..0BZ", tuple_to_list(Date) ++ tuple_to_list(Time))).

@@ -1,0 +1,325 @@
+-module(time_tracker_attendance).
+
+-export([
+    parse_schedule/1,
+    build_exclusion_secs/1,
+    build_touch_secs/1,
+    compute/5
+]).
+
+-define(EX_COME, <<"come later">>).
+-define(EX_LEAVE, <<"leave earlier">>).
+-define(EX_FULL, <<"full day">>).
+
+-type stats_map() :: #{
+    late_without_reason => non_neg_integer(),
+    late_with_reason => non_neg_integer(),
+    early_without_reason => non_neg_integer(),
+    early_with_reason => non_neg_integer(),
+    worked_days => non_neg_integer()
+}.
+
+parse_schedule({_StartBin, _EndBin, _DbDays, true}) ->
+    {ok, {0, 0, [], true}};
+parse_schedule({StartBin, EndBin, WorkdaysDb, false}) when is_binary(StartBin) ->
+    case {time_tracker_time:parse_time(StartBin), time_tracker_time:parse_time(EndBin)} of
+        {{ok, StartHms}, {ok, EndHms}} when StartHms < EndHms ->
+            SecFromMidnightStart = time_tracker_time:to_seconds(StartHms),
+            SecFromMidnightEnd = time_tracker_time:to_seconds(EndHms),
+            WorkdayNumbers = normalize_days(WorkdaysDb),
+            {ok, {SecFromMidnightStart, SecFromMidnightEnd, WorkdayNumbers, false}};
+        _ ->
+            {error, bad_schedule}
+    end;
+parse_schedule(_) ->
+    {error, bad_schedule}.
+
+normalize_days({array, DaysList}) when is_list(DaysList) ->
+    normalize_days(DaysList);
+normalize_days(WorkdayNumbers) when is_list(WorkdayNumbers) ->
+    [Day || Day <- WorkdayNumbers, is_integer(Day), Day >= 1, Day =< 7];
+normalize_days(WorkdayNumbers) when is_tuple(WorkdayNumbers) ->
+    normalize_days(tuple_to_list(WorkdayNumbers));
+normalize_days(_) -> [].
+
+build_exclusion_secs(Rows) ->
+    Fun =
+        fun({ExclType, StartDt, EndDt}) ->
+            case
+                {time_tracker_time:datetime_to_gregorian(StartDt), time_tracker_time:datetime_to_gregorian(EndDt)}
+            of
+                {{ok, StartGsec}, {ok, EndGsec}} when StartGsec =< EndGsec -> {true, {ExclType, StartGsec, EndGsec}};
+                _ -> false
+            end
+        end,
+    lists:filtermap(Fun, Rows).
+
+build_touch_secs(Rows) ->
+    Fun =
+        fun({EventType, TouchedDt}) ->
+            case time_tracker_time:datetime_to_gregorian(TouchedDt) of
+                {ok, TouchGsec} when EventType =:= <<"in">> -> {true, {TouchGsec, in}};
+                {ok, TouchGsec} when EventType =:= <<"out">> -> {true, {TouchGsec, out}};
+                _ -> false
+            end
+        end,
+    lists:sort(lists:filtermap(Fun, Rows)).
+
+-spec compute(
+    {integer(), integer(), [1..7], boolean()} | undefined,
+    [{binary(), integer(), integer()}],
+    [{integer(), in | out}],
+    integer(),
+    integer()
+) -> stats_map().
+compute(undefined, _ExclSecs, _Touches, _WindowStart, _WindowEnd) ->
+    empty(0);
+compute({0, 0, _, true}, _ExclSecs, Touches, WindowStart, WindowEnd) ->
+    empty(free_count(Touches, WindowStart, WindowEnd));
+compute({SecFromMidnightStart, SecFromMidnightEnd, WorkdayNumbers, false},
+    ExclSecs, Touches, WindowStart, WindowEnd) when SecFromMidnightStart < SecFromMidnightEnd,
+    WindowStart =< WindowEnd ->
+    NowGsec = time_tracker_time:now_gregorian_sec(),
+    TouchesByWorkday = touches_by_workday(Touches, WindowStart, WindowEnd),
+    {FirstDateInWindow, LastDateInWindow} = {date_ceil(WindowStart), date_floor(WindowEnd)},
+    TodayDate = date_of_greg(NowGsec),
+    Fun =
+        fun(WorkdayDate, Accum) ->
+            step(
+                WorkdayDate,
+                SecFromMidnightStart,
+                SecFromMidnightEnd,
+                WorkdayNumbers,
+                ExclSecs,
+                TouchesByWorkday,
+                WindowStart,
+                WindowEnd,
+                NowGsec,
+                TodayDate,
+                Accum
+            )
+        end,
+    DateRange = date_range(FirstDateInWindow, LastDateInWindow),
+    lists:foldl(Fun, empty(0), DateRange);
+compute(_Schedule, _ExclSecs, _Touches, _WindowStart, _WindowEnd) -> empty(0).
+
+empty(WorkedDaysInit) ->
+    #{
+        late_without_reason => 0,
+        late_with_reason => 0,
+        early_without_reason => 0,
+        early_with_reason => 0,
+        worked_days => WorkedDaysInit
+    }.
+
+free_count(Touches, WindowStart, WindowEnd) ->
+    Fun =
+        fun
+            ({TouchGsec, in}, {InAcc, OutAcc}) when
+                TouchGsec >= WindowStart, TouchGsec =< WindowEnd
+                ->
+                {InAcc + 1, OutAcc};
+            ({TouchGsec, out}, {InAcc, OutAcc}) when
+                TouchGsec >= WindowStart, TouchGsec =< WindowEnd
+                ->
+                {InAcc, OutAcc + 1};
+            (_, Counts) -> Counts
+        end,
+    {InCount, OutCount} = lists:foldl(Fun, {0, 0}, Touches),
+    erlang:min(InCount, OutCount).
+
+touches_by_workday(Touches, WindowStart, WindowEnd) ->
+    Fun =
+        fun
+            ({TouchGsec, InOrOut}, ByWorkday) when
+                TouchGsec >= WindowStart, TouchGsec =< WindowEnd
+                ->
+                Workday = date_of_greg(TouchGsec),
+                maps:update_with(Workday, fun(List) -> [{TouchGsec, InOrOut} | List] end, [{TouchGsec, InOrOut}], ByWorkday);
+            (_, ByWorkday) -> ByWorkday
+        end,
+    lists:foldl(Fun, #{}, Touches).
+
+date_of_greg(GregSec) -> element(1, calendar:gregorian_seconds_to_datetime(GregSec)).
+date_ceil(G) -> date_of_greg(G).
+date_floor(G) -> date_of_greg(G).
+
+date_range(RangeStart, RangeEnd) when RangeStart =< RangeEnd -> date_range_i(RangeStart, RangeEnd, []);
+date_range(_RangeStart, _RangeEnd) -> [].
+
+date_range_i(WorkdayDate, LastDate, AccRev) when WorkdayDate =< LastDate ->
+    date_range_i(date_add_one_day(WorkdayDate), LastDate, [WorkdayDate | AccRev]);
+date_range_i(_WorkdayDate, _LastDate, AccRev) ->
+    lists:reverse(AccRev).
+
+date_add_one_day({Year, Mon, Day}) ->
+    N = calendar:date_to_gregorian_days({Year, Mon, Day}) + 1,
+    calendar:gregorian_days_to_date(N).
+
+day_midnight_greg(WorkdayDate) -> calendar:datetime_to_gregorian_seconds({WorkdayDate, {0, 0, 0}}).
+
+step(
+    WorkdayDate,
+    SecFromMidnightStart,
+    SecFromMidnightEnd,
+    WorkdayNumbers,
+    ExclSecs,
+    TouchesByWorkday,
+    WindowStart,
+    WindowEnd,
+    NowGsec,
+    TodayDate,
+    Acc
+) ->
+    case lists:member(calendar:day_of_the_week(WorkdayDate), WorkdayNumbers) of
+        false ->
+            Acc;
+        true ->
+            ShiftStartGsec = day_midnight_greg(WorkdayDate) + SecFromMidnightStart,
+            ShiftEndGsec = day_midnight_greg(WorkdayDate) + SecFromMidnightEnd,
+            if
+                ShiftStartGsec > WindowEnd; ShiftEndGsec < WindowStart; ShiftStartGsec >= ShiftEndGsec -> Acc;
+                true ->
+                    case full_covers_work(ShiftStartGsec, ShiftEndGsec, ExclSecs) of
+                        true ->
+                            Acc;
+                        false ->
+                            case should_score_day(TodayDate, NowGsec, WorkdayDate, ShiftStartGsec, ShiftEndGsec) of
+                                false ->
+                                    Acc;
+                                true ->
+                                    DayTouches = lists:sort(maps:get(WorkdayDate, TouchesByWorkday, [])),
+                                    FirstInGsec = first_in_gsec(DayTouches),
+                                    LastOutGsec = last_out_gsec(DayTouches),
+                                    {LateWithout, LateWith, EarlyWithout, EarlyWith, Worked} = score_workday(
+                                        WorkdayDate,
+                                        TodayDate,
+                                        NowGsec,
+                                        FirstInGsec,
+                                        LastOutGsec,
+                                        ShiftStartGsec,
+                                        ShiftEndGsec,
+                                        ExclSecs
+                                    ),
+                                    Acc#{
+                                        late_without_reason => maps:get(late_without_reason, Acc) + LateWithout,
+                                        late_with_reason => maps:get(late_with_reason, Acc) + LateWith,
+                                        early_without_reason => maps:get(early_without_reason, Acc) + EarlyWithout,
+                                        early_with_reason => maps:get(early_with_reason, Acc) + EarlyWith,
+                                        worked_days => maps:get(worked_days, Acc) + Worked
+                                    }
+                            end
+                    end
+            end
+    end.
+
+
+should_score_day(TodayDate, _NowGsec, WorkdayDate, _ShiftStartGsec, _ShiftEndGsec) when
+    WorkdayDate < TodayDate ->
+    true;
+should_score_day(TodayDate, NowGsec, WorkdayDate, ShiftStartGsec, _ShiftEndGsec) when
+    WorkdayDate =:= TodayDate, NowGsec >= ShiftStartGsec ->
+    true;
+should_score_day(_TodayDate, _NowGsec, _WorkdayDate, _ShiftStartGsec, _ShiftEndGsec) ->
+    false.
+
+score_workday(WorkdayDate, TodayDate, NowGsec, FirstInGsec, LastOutGsec, ShiftStartGsec, ShiftEndGsec, ExclSecs) when
+    WorkdayDate =:= TodayDate, NowGsec < ShiftEndGsec, LastOutGsec =:= undefined ->
+    classify_late_only(FirstInGsec, ShiftStartGsec, ShiftEndGsec, ExclSecs);
+score_workday(_WorkdayDate, _TodayDate, _NowGsec, FirstInGsec, LastOutGsec, ShiftStartGsec, ShiftEndGsec, ExclSecs) ->
+    classify(FirstInGsec, LastOutGsec, ShiftStartGsec, ShiftEndGsec, ExclSecs).
+
+classify_late_only(undefined, _ShiftStartGsec, _ShiftEndGsec, _ExclSecs) ->
+    {1, 0, 0, 0, 0};
+classify_late_only(FirstInGsec, ShiftStartGsec, _ShiftEndGsec, ExclSecs) when is_integer(FirstInGsec) ->
+    HasComeExclusion = come_covered(FirstInGsec, ShiftStartGsec, ExclSecs),
+    LateWithout =
+        if
+            (FirstInGsec > ShiftStartGsec) andalso (not HasComeExclusion) -> 1;
+            true -> 0
+        end,
+    LateWith =
+        if
+            (FirstInGsec > ShiftStartGsec) andalso HasComeExclusion -> 1;
+            true -> 0
+        end,
+    {LateWithout, LateWith, 0, 0, 0}.
+
+full_covers_work(ShiftStartGsec, ShiftEndGsec, ExclSecs) ->
+    Fun =
+        fun
+            ({?EX_FULL, SpanStart, SpanEnd}) when SpanStart =< ShiftStartGsec, SpanEnd >= ShiftEndGsec -> true;
+            (_) -> false
+        end,
+    lists:any(Fun, ExclSecs).
+
+first_in_gsec(Sorted) ->
+    case [Gsec || {Gsec, in} <- Sorted] of
+        [] ->
+            undefined;
+        InList ->
+            lists:min(InList)
+    end.
+
+last_out_gsec(Sorted) ->
+    case [Gsec || {Gsec, out} <- Sorted] of
+        [] ->
+            undefined;
+        OutList ->
+            lists:max(OutList)
+    end.
+
+come_covered(FirstInGsec, ShiftStartGsec, ExclSecs) when is_integer(FirstInGsec) ->
+    Fun =
+        fun
+            ({?EX_COME, ExclStart, ExclEnd}) when ExclStart =< FirstInGsec, FirstInGsec =< ExclEnd -> true;
+            (_) -> false
+        end,
+    (FirstInGsec =< ShiftStartGsec) orelse lists:any(Fun, ExclSecs);
+come_covered(_FirstIn, _ShiftStart, _Excl) ->
+    false.
+
+leave_covered(LastOutGsec, ShiftEndGsec, ExclSecs) when is_integer(LastOutGsec) ->
+    Fun =
+        fun
+            ({?EX_LEAVE, ExclStart, ExclEnd}) when ExclStart =< LastOutGsec, LastOutGsec =< ExclEnd -> true;
+            (_) -> false
+        end,
+    (LastOutGsec >= ShiftEndGsec) orelse lists:any(Fun, ExclSecs);
+leave_covered(_LastOut, _ShiftEnd, _Excl) ->
+    false.
+
+classify(undefined, _LastOutGsec, _ShiftStartGsec, _ShiftEndGsec, _ExclSecs) ->
+    {1, 0, 0, 0, 0};
+classify(_FirstInGsec, undefined, _ShiftStartGsec, _ShiftEndGsec, _ExclSecs) when is_integer(_FirstInGsec) ->
+    {0, 0, 1, 0, 0};
+classify(FirstInGsec, LastOutGsec, ShiftStartGsec, ShiftEndGsec, ExclSecs) when
+    is_integer(FirstInGsec), is_integer(LastOutGsec) ->
+    HasComeExclusion = come_covered(FirstInGsec, ShiftStartGsec, ExclSecs),
+    HasLeaveExclusion = leave_covered(LastOutGsec, ShiftEndGsec, ExclSecs),
+    LateWithout =
+        if
+            (FirstInGsec > ShiftStartGsec) andalso (not HasComeExclusion) -> 1;
+            true -> 0
+        end,
+    LateWith =
+        if
+            (FirstInGsec > ShiftStartGsec) andalso HasComeExclusion -> 1;
+            true -> 0
+        end,
+    EarlyWithout =
+        if
+            (LastOutGsec < ShiftEndGsec) andalso (not HasLeaveExclusion) -> 1;
+            true -> 0
+        end,
+    EarlyWith =
+        if
+            (LastOutGsec < ShiftEndGsec) andalso HasLeaveExclusion -> 1;
+            true -> 0
+        end,
+    Worked =
+        case {LateWithout, EarlyWithout, FirstInGsec, LastOutGsec} of
+            {0, 0, _, _} when LastOutGsec >= FirstInGsec -> 1;
+            _ -> 0
+        end,
+    {LateWithout, LateWith, EarlyWithout, EarlyWith, Worked}.

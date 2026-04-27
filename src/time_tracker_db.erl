@@ -2,8 +2,21 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, query/2, query/3, execute/2, execute/3]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, handle_continue/2]).
+-export([
+    start_link/0,
+    query/2,
+    query/3,
+    execute/2,
+    execute/3
+]).
+-export([
+    init/1,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    handle_continue/2
+]).
 
 -record(state, {
     conn = undefined,

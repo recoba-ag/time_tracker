@@ -79,18 +79,44 @@
   "LIMIT $1"
 >>).
 
--define(GET_STATISTICS_BY_USER, <<
-  "SELECT event_type, COUNT(*) FROM touch_events "
-  "WHERE user_id = $1 AND touched_at >= $2::timestamptz "
-  "GROUP BY event_type"
+-define(GET_HISTORY_EPOCH, <<
+  "SELECT user_id, event_type, (EXTRACT(EPOCH FROM touched_at))::float8 AS ts "
+  "FROM touch_events "
+  "ORDER BY touched_at DESC "
+  "LIMIT $1"
 >>).
 
--define(GET_STATISTICS, <<
-  "SELECT user_id, COUNT(*) "
-  "FROM touch_events "
-  "GROUP BY user_id "
-  "ORDER BY user_id ASC "
-  "LIMIT $1"
+-define(GET_MIN_TOUCHED_AT_FOR_USER, <<
+  "SELECT MIN(touched_at) FROM touch_events WHERE user_id = $1"
+>>).
+
+-define(GET_TOUCHES_FOR_USER_IN_RANGE, <<
+  "SELECT event_type, touched_at FROM touch_events "
+  "WHERE user_id = $1 AND touched_at >= $2::timestamptz AND touched_at <= $3::timestamptz "
+  "ORDER BY touched_at ASC"
+>>).
+
+-define(GET_TOUCHES_FOR_USERS_IN_RANGE, <<
+  "SELECT user_id, event_type, touched_at FROM touch_events "
+  "WHERE user_id = ANY($1::bigint[]) AND touched_at >= $2::timestamptz AND touched_at <= $3::timestamptz "
+  "ORDER BY user_id, touched_at ASC"
+>>).
+
+-define(GET_EXCLUSIONS_FOR_USER_IN_RANGE, <<
+  "SELECT type_exclusion, start_datetime, end_datetime "
+  "FROM work_exclusions "
+  "WHERE user_id = $1 AND end_datetime >= $2::timestamptz AND start_datetime <= $3::timestamptz"
+>>).
+
+-define(GET_EXCLUSIONS_FOR_USERS_IN_RANGE, <<
+  "SELECT user_id, type_exclusion, start_datetime, end_datetime "
+  "FROM work_exclusions "
+  "WHERE user_id = ANY($1::bigint[]) AND end_datetime >= $2::timestamptz AND start_datetime <= $3::timestamptz"
+>>).
+
+-define(GET_WORK_SCHEDULES_FOR_USERS, <<
+  "SELECT user_id, start_time::text, end_time::text, days, free_schedule "
+  "FROM work_schedules WHERE user_id = ANY($1::bigint[])"
 >>).
 
 -define(GET_NEXT_EVENT_TYPE_BY_USER, <<

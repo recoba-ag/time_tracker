@@ -5,7 +5,14 @@
 -include_lib("amqp_client/include/amqp_client.hrl").
 
 -export([start_link/0]).
--export([init/1, handle_info/2, terminate/2, handle_call/3, handle_cast/2, handle_continue/2]).
+-export([
+    init/1,
+    handle_info/2,
+    terminate/2,
+    handle_call/3,
+    handle_cast/2,
+    handle_continue/2
+]).
 
 -record(state, {
     conn = undefined,
@@ -90,10 +97,8 @@ publish_response(Chan, ReplyTo, CorrId, Resp) ->
         #'basic.publish'{exchange = <<>>, routing_key = ReplyTo},
         #amqp_msg{props = Props, payload = Resp}
     ),
-    logger:info(
-        "Outgoing RPC response payload=~ts content_type=application/json reply_to=~ts correlation_id=~ts",
-        [to_printable(Resp), to_printable(ReplyTo), to_printable(CorrId)]
-    ).
+    logger:info("Outgoing RPC response payload=~ts content_type=application/json reply_to=~ts correlation_id=~ts",
+        [to_printable(Resp), to_printable(ReplyTo), to_printable(CorrId)]).
 
 maybe_connect(State) ->
     Rc = rabbit_config(),
