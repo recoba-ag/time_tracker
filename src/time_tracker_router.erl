@@ -81,8 +81,6 @@ handle(<<"/work_time/statistics">>, Args) ->
 
 to_json_response({ok, Data}) ->
     ok_json(Data);
-to_json_response({error, Reason}) ->
-    err_json(internal_error, Reason);
 to_json_response({error, Code, Message}) ->
     err_json(Code, Message).
 

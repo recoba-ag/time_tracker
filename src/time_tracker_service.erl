@@ -37,7 +37,13 @@
     start_datetime => term(),
     end_datetime => term()
 }.
--type history_event() :: #{card_uid => binary(), touched_at => term(), event_type => binary()}.
+-type history_event() :: #{
+    user_id := user_id(),
+    card_uid := binary(),
+    touched_at := term(),
+    event_type := binary()
+}.
+-type history_group() :: #{user_id := user_id(), events := [history_event()]}.
 -type stats_by_user() :: #{
     user_id => user_id(),
     period => period_bin(),
@@ -178,24 +184,26 @@ get_exclusion(UserId) ->
             Error
     end.
 
--spec history_by_user(user_id()) -> {ok, #{user_id => user_id(), history => [history_event()]}} | service_error().
+-spec history_by_user(user_id()) -> {ok, #{user_id := user_id(), events := [history_event()]}} | service_error().
 history_by_user(UserId) ->
     GetHistoryRes = time_tracker_db:query(?GET_HISTORY_BY_USER, [UserId]),
     case GetHistoryRes of
         {ok, Rows} ->
-            Hist = [#{card_uid => C, touched_at => T, event_type => E} || {C, T, E} <- Rows],
-            {ok, #{user_id => UserId, history => Hist}};
+            Events = [
+                #{user_id => UserId, card_uid => C, touched_at => T, event_type => E}
+             || {C, T, E} <- Rows
+            ],
+            {ok, #{user_id => UserId, events => Events}};
         {error, _Code, _Reason} = Error ->
             Error
     end.
 
--spec history(pos_integer()) -> {ok, #{history => [map()]}} | service_error().
+-spec history(pos_integer()) -> {ok, [history_group()]} | service_error().
 history(Limit) ->
     GetHistoryRes = time_tracker_db:query(?GET_HISTORY, [Limit]),
     case GetHistoryRes of
         {ok, Rows} ->
-            GroupedHist = grouped_history_by_user(Rows),
-            {ok, #{history => GroupedHist}};
+            {ok, grouped_history_by_user(Rows)};
         {error, _Code, _Reason} = Error ->
             Error
     end.
@@ -371,7 +379,7 @@ grouped_history_by_user(Rows) ->
         end,
     Grouped = lists:foldl(AppendEventToUserHistory, #{}, Rows),
     UserIds = lists:sort(maps:keys(Grouped)),
-    [#{user_id => UserId, history => lists:reverse(maps:get(UserId, Grouped))} || UserId <- UserIds].
+    [#{user_id => UserId, events => lists:reverse(maps:get(UserId, Grouped))} || UserId <- UserIds].
 
 period_atom(<<"week">>) -> week;
 period_atom(<<"month">>) -> month;
