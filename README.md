@@ -155,6 +155,8 @@ rebar3 eunit
 rebar3 dialyzer
 ```
 
+**Unit tests** (`test/time_tracker_time_tests.erl`, `test/time_tracker_attendance_tests.erl`): periods and time helpers; core attendance rules — schedule vs free day, late/early with and without reasons, full-day and come/leave exclusions, weekend ignored, absence, in without out, first-in/last-out over multiple events, and DB-row decoding for touches/exclusions. Scenarios use a fixed past date so “today” logic does not make tests flaky.
+
 With Docker (Postgres, RabbitMQ, app):
 
 ```bash
