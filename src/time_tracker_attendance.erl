@@ -19,6 +19,19 @@
     worked_days => non_neg_integer()
 }.
 
+-export_type([stats_map/0, work_schedule/0, touch_gsec/0, exclusion_gsec/0, exclusion_db_row/0, touch_db_row/0]).
+
+-type work_schedule() ::
+    {non_neg_integer(), non_neg_integer(), [1..7], false}
+    | {0, 0, [], true}.
+
+-type touch_gsec() :: {time_tracker_time:gregorian_sec(), in | out}.
+-type exclusion_gsec() :: {binary(), non_neg_integer(), non_neg_integer()}.
+
+-type exclusion_db_row() :: {binary(), term(), term()}.
+-type touch_db_row() :: {binary(), term()}.
+
+-spec parse_schedule(tuple()) -> {ok, work_schedule()} | {error, bad_schedule}.
 parse_schedule({_StartBin, _EndBin, _DbDays, true}) ->
     {ok, {0, 0, [], true}};
 parse_schedule({StartBin, EndBin, WorkdaysDb, false}) when is_binary(StartBin) ->
@@ -42,6 +55,7 @@ normalize_days(WorkdayNumbers) when is_tuple(WorkdayNumbers) ->
     normalize_days(tuple_to_list(WorkdayNumbers));
 normalize_days(_) -> [].
 
+-spec build_exclusion_secs([exclusion_db_row()]) -> [exclusion_gsec()].
 build_exclusion_secs(Rows) ->
     ExclRowToGsecTuple =
         fun({ExclType, StartDt, EndDt}) ->
@@ -54,6 +68,7 @@ build_exclusion_secs(Rows) ->
         end,
     lists:filtermap(ExclRowToGsecTuple, Rows).
 
+-spec build_touch_secs([touch_db_row()]) -> [touch_gsec()].
 build_touch_secs(Rows) ->
     TouchRowToGsecPair =
         fun({EventType, TouchedDt}) ->
@@ -66,11 +81,11 @@ build_touch_secs(Rows) ->
     lists:sort(lists:filtermap(TouchRowToGsecPair, Rows)).
 
 -spec compute(
-    {integer(), integer(), [1..7], boolean()} | undefined,
-    [{binary(), integer(), integer()}],
-    [{integer(), in | out}],
-    integer(),
-    integer()
+    work_schedule() | undefined,
+    [exclusion_gsec()],
+    [touch_gsec()],
+    time_tracker_time:gregorian_sec(),
+    time_tracker_time:gregorian_sec()
 ) -> stats_map().
 compute(undefined, _ExclSecs, _Touches, _WindowStart, _WindowEnd) ->
     empty(0);
@@ -248,8 +263,11 @@ classify_late_only(FirstInGsec, ShiftStartGsec, _ShiftEndGsec, ExclSecs) when is
 full_covers_work(ShiftStartGsec, ShiftEndGsec, ExclSecs) ->
     FullExclSpansEntireShift =
         fun
-            ({?EX_FULL, SpanStart, SpanEnd}) when SpanStart =< ShiftStartGsec, SpanEnd >= ShiftEndGsec -> true;
-            (_) -> false
+            ({?EX_FULL, SpanStart, SpanEnd})
+                when SpanStart =< ShiftStartGsec, SpanEnd >= ShiftEndGsec ->
+                true;
+            (_) ->
+                false
         end,
     lists:any(FullExclSpansEntireShift, ExclSecs).
 
@@ -272,22 +290,23 @@ last_out_gsec(Sorted) ->
 come_covered(FirstInGsec, ShiftStartGsec, ExclSecs) when is_integer(FirstInGsec) ->
     ComeExclContainsFirstIn =
         fun
-            ({?EX_COME, ExclStart, ExclEnd}) when ExclStart =< FirstInGsec, FirstInGsec =< ExclEnd -> true;
-            (_) -> false
+            ({?EX_COME, ExclStart, ExclEnd}) when
+                ExclStart =< FirstInGsec, FirstInGsec =< ExclEnd ->
+                true;
+            (_) ->
+                false
         end,
-    (FirstInGsec =< ShiftStartGsec) orelse lists:any(ComeExclContainsFirstIn, ExclSecs);
-come_covered(_FirstIn, _ShiftStart, _Excl) ->
-    false.
+    (FirstInGsec =< ShiftStartGsec) orelse lists:any(ComeExclContainsFirstIn, ExclSecs).
 
 leave_covered(LastOutGsec, ShiftEndGsec, ExclSecs) when is_integer(LastOutGsec) ->
     LeaveExclContainsLastOut =
         fun
-            ({?EX_LEAVE, ExclStart, ExclEnd}) when ExclStart =< LastOutGsec, LastOutGsec =< ExclEnd -> true;
-            (_) -> false
+            ({?EX_LEAVE, ExclStart, ExclEnd}) when ExclStart =< LastOutGsec, LastOutGsec =< ExclEnd ->
+                true;
+            (_) ->
+                false
         end,
-    (LastOutGsec >= ShiftEndGsec) orelse lists:any(LeaveExclContainsLastOut, ExclSecs);
-leave_covered(_LastOut, _ShiftEnd, _Excl) ->
-    false.
+    (LastOutGsec >= ShiftEndGsec) orelse lists:any(LeaveExclContainsLastOut, ExclSecs).
 
 classify(undefined, _LastOutGsec, _ShiftStartGsec, _ShiftEndGsec, _ExclSecs) ->
     {1, 0, 0, 0, 0};

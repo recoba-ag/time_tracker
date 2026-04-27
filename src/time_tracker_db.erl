@@ -1,5 +1,7 @@
 -module(time_tracker_db).
 
+-dialyzer({nowarn_function, [rows_result/1, exec_result/1]}).
+
 -behaviour(gen_server).
 
 -export([
@@ -27,18 +29,29 @@
 -define(SERVER, ?MODULE).
 -define(RECONNECT, reconnect).
 
+-type sql() :: iodata().
+-type query_error() :: {error, internal_error, binary()}.
+-type rows_ok() :: {ok, [tuple()]}.
+-type query_result() :: rows_ok() | query_error() | {error, term()}.
+-type exec_result() :: ok | query_error() | {error, term()}.
+
+-spec start_link() -> {ok, pid()} | {error, term()}.
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
+-spec query(sql(), [term()]) -> query_result().
 query(Sql, Params) ->
     query(Sql, Params, 5000).
 
+-spec query(sql(), [term()], timeout()) -> query_result().
 query(Sql, Params, Timeout) ->
     gen_server:call(?SERVER, {query, Sql, Params}, Timeout).
 
+-spec execute(sql(), [term()]) -> exec_result().
 execute(Sql, Params) ->
     execute(Sql, Params, 5000).
 
+-spec execute(sql(), [term()], timeout()) -> exec_result().
 execute(Sql, Params, Timeout) ->
     gen_server:call(?SERVER, {execute, Sql, Params}, Timeout).
 

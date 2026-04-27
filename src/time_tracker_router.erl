@@ -2,6 +2,7 @@
 
 -export([handle_request/1]).
 
+-spec handle_request(binary()) -> map().
 handle_request(Payload) ->
     case time_tracker_decoder:decode(Payload) of
         {ok, Data} ->

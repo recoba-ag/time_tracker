@@ -4,6 +4,9 @@
 
 -export([validate/1]).
 
+-type method_bin() :: binary().
+
+-spec validate(map()) -> {ok, method_bin(), map()} | {error, term()}.
 validate(#{<<"method">> := Method, <<"params">> := Params})
   when is_binary(Method), is_map(Params) ->
   case validate(Method, Params) of

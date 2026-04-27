@@ -9,6 +9,17 @@
     datetime_to_gregorian/1
 ]).
 
+-export_type([period/0, hms/0, parse_error/0, gregorian_sec/0]).
+
+-type period() :: week | month | year | all.
+%% Hour / minute / second of day; values validated at parse time.
+-type hms() :: {0..23, 0..59, 0..59}.
+-type parse_error() :: error.
+%% Gregorian seconds (Erlang calendar:datetime_to_gregorian_seconds/1 convention).
+-type gregorian_sec() :: non_neg_integer().
+
+-spec period_start(period()) -> gregorian_sec().
+
 period_start(week) ->
     {{Y, M, D}, _} = calendar:universal_time(),
     Date = {Y, M, D},
@@ -23,6 +34,11 @@ period_start(year) ->
 period_start(all) ->
     0.
 
+-spec to_seconds(hms()) -> non_neg_integer().
+to_seconds({H, M, S}) ->
+    H * 3600 + M * 60 + S.
+
+-spec parse_time(binary()) -> {ok, hms()} | parse_error().
 parse_time(Bin) when is_binary(Bin) ->
     Parts = binary:split(Bin, [<<":">>, <<".">>], [global]),
     case Parts of
@@ -51,9 +67,11 @@ parse_time(Bin) when is_binary(Bin) ->
 parse_time(_) ->
     error.
 
+-spec now_gregorian_sec() -> gregorian_sec().
 now_gregorian_sec() ->
     calendar:datetime_to_gregorian_seconds(calendar:universal_time()).
 
+-spec datetime_to_gregorian(calendar:datetime() | term()) -> {ok, gregorian_sec()} | parse_error().
 datetime_to_gregorian({{Y, Mo, D}, T}) when is_tuple(T), tuple_size(T) =:= 3 ->
     {H, Mi, S} = T,
     S2 = if
@@ -69,6 +87,7 @@ datetime_to_gregorian({{Y, Mo, D}, T}) when is_tuple(T), tuple_size(T) =:= 3 ->
 datetime_to_gregorian(_) ->
     error.
 
+-spec parse_iso8601(binary()) -> {ok, calendar:datetime()} | parse_error().
 parse_iso8601(Bin) when is_binary(Bin) ->
     case Bin of
         <<Y:4/binary, "-", Mo:2/binary, "-", D:2/binary,
@@ -125,9 +144,6 @@ parse_parts(Y, Mo, D, H, Mi, S, TZH, TZM) ->
 apply_offset(DateTime, OffsetSeconds) ->
     GS = calendar:datetime_to_gregorian_seconds(DateTime),
     calendar:gregorian_seconds_to_datetime(GS - OffsetSeconds).
-
-to_seconds({H, M, S}) ->
-    H * 3600 + M * 60 + S.
 
 to_int(B) ->
     case catch binary_to_integer(B) of

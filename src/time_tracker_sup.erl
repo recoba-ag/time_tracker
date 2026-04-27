@@ -8,9 +8,11 @@
 
 -define(SERVER, ?MODULE).
 
+-spec start_link() -> {ok, pid()} | {error, term()}.
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
+-spec init([]) -> {ok, {supervisor:sup_flags(), [supervisor:child_spec()]}}.
 init([]) ->
     SupFlags = #{
         strategy => one_for_one,

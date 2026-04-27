@@ -18,6 +18,37 @@
     statistics/1
 ]).
 
+-type user_id() :: pos_integer().
+-type card_uid() :: binary().
+-type period_bin() :: binary().
+
+-type service_error() :: {error, atom(), binary() | map()} | {error, term(), term()}.
+
+-type card_map() :: #{card_uid => card_uid(), user_id => user_id()}.
+-type work_time_map() :: #{
+    user_id => user_id(),
+    start_time => term(),
+    end_time => term(),
+    days => term(),
+    free_schedule => term()
+}.
+-type exclusion_item() :: #{
+    type_exclusion => binary(),
+    start_datetime => term(),
+    end_datetime => term()
+}.
+-type history_event() :: #{card_uid => binary(), touched_at => term(), event_type => binary()}.
+-type stats_by_user() :: #{
+    user_id => user_id(),
+    period => period_bin(),
+    late_without_reason => non_neg_integer(),
+    late_with_reason => non_neg_integer(),
+    early_without_reason => non_neg_integer(),
+    early_with_reason => non_neg_integer(),
+    worked_days => number()
+}.
+
+-spec assign_card(user_id(), card_uid()) -> {ok, card_map()} | service_error().
 assign_card(UserId, CardUid) ->
     AssignRes = time_tracker_db:query(?ASSIGN_CARD, [UserId, CardUid]),
     case AssignRes of
@@ -43,6 +74,7 @@ assign_card(UserId, CardUid) ->
             Error
     end.
 
+-spec delete_card(card_uid()) -> {ok, card_map()} | service_error().
 delete_card(CardUid) ->
     DeleteRes = time_tracker_db:query(?DELETE_CARD, [CardUid]),
     case DeleteRes of
@@ -54,6 +86,7 @@ delete_card(CardUid) ->
             Error
     end.
 
+-spec list_cards_by_user(user_id()) -> {ok, #{user_id => user_id(), cards => [card_uid()]}} | service_error().
 list_cards_by_user(UserId) ->
     GetRes = time_tracker_db:query(?GET_CARDS_BY_USER, [UserId]),
     case GetRes of
@@ -64,6 +97,7 @@ list_cards_by_user(UserId) ->
             Error
     end.
 
+-spec delete_all_cards_by_user(user_id()) -> {ok, #{user_id => user_id(), cards => [card_uid()]}} | service_error().
 delete_all_cards_by_user(UserId) ->
     DeleteRes = time_tracker_db:query(?DELETE_ALL_USER_CARDS, [UserId]),
     case DeleteRes of
@@ -74,6 +108,7 @@ delete_all_cards_by_user(UserId) ->
             Error
     end.
 
+-spec touch_card(card_uid()) -> {ok, #{card_uid => card_uid(), user_id => user_id(), event_type => binary()}} | service_error().
 touch_card(CardUid) ->
     GetUserRes = time_tracker_db:query(?GET_USER_BY_CARD, [CardUid]),
     case GetUserRes of
@@ -91,6 +126,7 @@ touch_card(CardUid) ->
             Error
     end.
 
+-spec set_work_time(user_id(), term(), term(), term(), term()) -> {ok, #{user_id => user_id()}} | service_error().
 set_work_time(UserId, StartTime, EndTime, Days, Free) ->
     SetWorkTimeRes = time_tracker_db:execute(?SET_USER_WORK_TIME, [UserId, StartTime, EndTime, Days, Free]),
     case SetWorkTimeRes of
@@ -100,6 +136,7 @@ set_work_time(UserId, StartTime, EndTime, Days, Free) ->
             Error
     end.
 
+-spec get_work_time(user_id()) -> {ok, work_time_map()} | service_error().
 get_work_time(UserId) ->
     UserWorkTime = time_tracker_db:query(?GET_USER_WORK_TIME, [UserId]),
     case UserWorkTime of
@@ -117,6 +154,7 @@ get_work_time(UserId) ->
             Error
     end.
 
+-spec add_exclusion(user_id(), binary(), term(), term()) -> {ok, #{user_id => user_id()}} | service_error().
 add_exclusion(UserId, Type, StartDt, EndDt) ->
     AddRes = time_tracker_db:execute(?ADD_USER_EXCLUSION, [UserId, Type, StartDt, EndDt]),
     case AddRes of
@@ -126,6 +164,7 @@ add_exclusion(UserId, Type, StartDt, EndDt) ->
             Error
     end.
 
+-spec get_exclusion(user_id()) -> {ok, #{user_id => user_id(), exclusions => [exclusion_item()]}} | service_error().
 get_exclusion(UserId) ->
     GetExclusionRes = time_tracker_db:query(?GET_USER_EXCLUSION, [UserId]),
     case GetExclusionRes of
@@ -139,6 +178,7 @@ get_exclusion(UserId) ->
             Error
     end.
 
+-spec history_by_user(user_id()) -> {ok, #{user_id => user_id(), history => [history_event()]}} | service_error().
 history_by_user(UserId) ->
     GetHistoryRes = time_tracker_db:query(?GET_HISTORY_BY_USER, [UserId]),
     case GetHistoryRes of
@@ -149,6 +189,7 @@ history_by_user(UserId) ->
             Error
     end.
 
+-spec history(pos_integer()) -> {ok, #{history => [map()]}} | service_error().
 history(Limit) ->
     GetHistoryRes = time_tracker_db:query(?GET_HISTORY, [Limit]),
     case GetHistoryRes of
@@ -159,6 +200,7 @@ history(Limit) ->
             Error
     end.
 
+-spec statistics_by_user(user_id(), period_bin()) -> {ok, stats_by_user()} | service_error().
 statistics_by_user(UserId, PeriodBin) ->
     NowGsec = time_tracker_time:now_gregorian_sec(),
     WindowStartGsec = period_t_start(period_atom(PeriodBin), UserId, NowGsec),
@@ -200,6 +242,7 @@ statistics_by_user(UserId, PeriodBin) ->
             E
     end.
 
+-spec statistics(pos_integer()) -> {ok, #{users => [map()]}} | service_error().
 statistics(Limit) ->
     GetHistoryRes = time_tracker_db:query(?GET_HISTORY_EPOCH, [Limit]),
     case GetHistoryRes of

@@ -2,6 +2,7 @@
 
 -export([ensure/1]).
 
+-spec ensure(term()) -> ok.
 ensure(Conn) ->
     Statements = load_schema_statements(),
     RunStatement =
