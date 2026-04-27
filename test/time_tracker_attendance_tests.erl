@@ -4,7 +4,6 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-%% Fixed past dates so "today" logic never flips; universal-time calendar.
 -define(D_WED, {2020, 6, 10}).
 -define(D_SAT, {2020, 6, 13}).
 
@@ -12,10 +11,8 @@ day_base(D) -> calendar:datetime_to_gregorian_seconds({D, {0, 0, 0}}).
 
 at(D, H, M, S) -> day_base(D) + H * 3600 + M * 60 + S.
 
-%% Mon–Fri 09:00–18:00, office days 1..5
 schedule_9_18() -> {9 * 3600, 18 * 3600, [1, 2, 3, 4, 5], false}.
 
-%% Single calendar day D only (avoids scoring neighbour days in the same range).
 window_single_day(D) ->
     B = day_base(D),
     {B, B + 86400 - 1}.
@@ -177,7 +174,6 @@ in_no_out_past_test() ->
     ?assertEqual(1, maps:get(early_without_reason, M)),
     ?assertEqual(0, maps:get(worked_days, M)).
 
-%% Multiple in/out: first in and last out only
 first_in_last_out_test() ->
     {WS, WE} = window_single_day(?D_WED),
     Sch = schedule_9_18(),
@@ -188,7 +184,6 @@ first_in_last_out_test() ->
         {at(?D_WED, 18, 0, 0), out}
     ],
     M = time_tracker_attendance:compute(Sch, [], T, WS, WE),
-    %% Effective first in 8:00 -> on time; last out 18:00
     ?assertEqual(0, maps:get(late_without_reason, M)),
     ?assertEqual(0, maps:get(early_without_reason, M)),
     ?assertEqual(1, maps:get(worked_days, M)).
