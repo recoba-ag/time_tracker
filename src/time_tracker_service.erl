@@ -211,7 +211,7 @@ history(Limit) ->
 -spec statistics_by_user(user_id(), period_bin()) -> {ok, stats_by_user()} | service_error().
 statistics_by_user(UserId, PeriodBin) ->
     NowGsec = time_tracker_time:now_gregorian_sec(),
-    WindowStartGsec = period_t_start(period_atom(PeriodBin), UserId, NowGsec),
+    WindowStartGsec = statistics_window_start(UserId, period_atom(PeriodBin), NowGsec),
     WindowStartDt = calendar:gregorian_seconds_to_datetime(WindowStartGsec),
     WindowEndDt = calendar:gregorian_seconds_to_datetime(NowGsec),
     GetWorkTimeRes = time_tracker_db:query(?GET_USER_WORK_TIME, [UserId]),
@@ -260,16 +260,15 @@ statistics(Limit) ->
             TouchedGsecs = [ts_to_gsec(T) || {_, _, T} <- HRows, is_number(T)],
             EarliestTouchedGsec = lists:min(TouchedGsecs),
             LatestTouchedGsec = lists:max(TouchedGsecs),
-            UserIds0 = [UserId || {UserId, _, _} <- HRows],
-            UserIds = ordsets:from_list(UserIds0),
+            UserIdList = lists:usort([UserId || {UserId, _, _} <- HRows]),
             WindowStartGsec = EarliestTouchedGsec,
             WindowEndGsec = LatestTouchedGsec,
             WindowStartDt = calendar:gregorian_seconds_to_datetime(WindowStartGsec),
             WindowEndDt = calendar:gregorian_seconds_to_datetime(WindowEndGsec),
-            UserIdList = ordsets:to_list(UserIds),
+            NowGsec = time_tracker_time:now_gregorian_sec(),
             GetWorkSchedulesRes = time_tracker_db:query(?GET_WORK_SCHEDULES_FOR_USERS, [UserIdList]),
-            case GetWorkSchedulesRes of
-                {ok, SchRows} ->
+            case {GetWorkSchedulesRes, first_touch_gsec_by_user(UserIdList, NowGsec)} of
+                {{ok, SchRows}, {ok, FirstTouchByUser}} ->
                     SchedulesByUser = schedule_map(SchRows),
                     GetExclusionsRes = time_tracker_db:query(?GET_EXCLUSIONS_FOR_USERS_IN_RANGE, [UserIdList, WindowStartDt, WindowEndDt]),
                     GetTouchesRes = time_tracker_db:query(?GET_TOUCHES_FOR_USERS_IN_RANGE, [UserIdList, WindowStartDt, WindowEndDt]),
@@ -278,13 +277,17 @@ statistics(Limit) ->
                             ExclusionsByUser = exclusions_by_user(ExclRowsAll),
                             TouchesByUser = touches_by_user(TouchRowsAll),
                             Users = [
-                                (time_tracker_attendance:compute(
-                                    maps:get(UserId, SchedulesByUser, undefined),
-                                    time_tracker_attendance:build_exclusion_secs(maps:get(UserId, ExclusionsByUser, [])),
-                                    maps:get(UserId, TouchesByUser, []),
-                                    WindowStartGsec,
-                                    WindowEndGsec
-                                )) #{user_id => UserId}
+                                begin
+                                    FirstGsec = first_touch_gsec_for_user(UserId, FirstTouchByUser, NowGsec),
+                                    UserWindowStart = erlang:max(WindowStartGsec, FirstGsec),
+                                    (time_tracker_attendance:compute(
+                                        maps:get(UserId, SchedulesByUser, undefined),
+                                        time_tracker_attendance:build_exclusion_secs(maps:get(UserId, ExclusionsByUser, [])),
+                                        maps:get(UserId, TouchesByUser, []),
+                                        UserWindowStart,
+                                        WindowEndGsec
+                                    )) #{user_id => UserId}
+                                end
                                 || UserId <- UserIdList
                             ],
                             {ok, #{users => Users}};
@@ -293,7 +296,9 @@ statistics(Limit) ->
                         {_, {error, _C, _M} = E} ->
                             E
                     end;
-                {error, _C, _M} = E ->
+                {{error, _C, _M} = E, _} ->
+                    E;
+                {_, {error, _C, _M} = E} ->
                     E
             end;
         {error, _C, _M} = E ->
@@ -311,22 +316,57 @@ empty_stats_map(UserId, PeriodBin, W) ->
         worked_days => W
     }.
 
-period_t_start(all, UserId, NowGsec) ->
+statistics_window_start(UserId, all, NowGsec) ->
+    user_first_touch_gsec(UserId, NowGsec);
+statistics_window_start(UserId, Period, NowGsec) ->
+    erlang:max(calendar_period_start(Period), user_first_touch_gsec(UserId, NowGsec)).
+
+min_touched_at_to_gsec(null, NowGsec) ->
+    NowGsec;
+min_touched_at_to_gsec(MinTouchedAt, NowGsec) ->
+    case time_tracker_time:datetime_to_gregorian(MinTouchedAt) of
+        {ok, G} -> G;
+        _ -> NowGsec
+    end.
+
+user_first_touch_gsec(UserId, NowGsec) ->
     GetTouchesRes = time_tracker_db:query(?GET_MIN_TOUCHED_AT_FOR_USER, [UserId]),
     case GetTouchesRes of
-        {ok, [{MinTouchedAt}]} when MinTouchedAt =/= null ->
-            Time = time_tracker_time:datetime_to_gregorian(MinTouchedAt),
-            case Time of
-                {ok, FirstEventGsec} -> FirstEventGsec;
-                _ -> NowGsec
-            end;
+        {ok, [{MinTouchedAt}]} ->
+            min_touched_at_to_gsec(MinTouchedAt, NowGsec);
         _ ->
             NowGsec
-    end;
-period_t_start(week, _UserId, _NowGsec) ->
+    end.
+
+first_touch_gsec_by_user([], _NowGsec) ->
+    {ok, #{}};
+first_touch_gsec_by_user(UserIds, NowGsec) ->
+    GetRes = time_tracker_db:query(?GET_MIN_TOUCHED_AT_FOR_USERS, [UserIds]),
+    case GetRes of
+        {ok, Rows} ->
+            Pair =
+                fun({UserId, MinT}) ->
+                    {UserId, min_touched_at_to_gsec(MinT, NowGsec)}
+                end,
+            {ok, maps:from_list(lists:map(Pair, Rows))};
+        {error, _} = E ->
+            E
+    end.
+
+first_touch_gsec_for_user(UserId, FirstTouchByUser, NowGsec) ->
+    case maps:find(UserId, FirstTouchByUser) of
+        {ok, G} ->
+            G;
+        error ->
+            user_first_touch_gsec(UserId, NowGsec)
+    end.
+
+calendar_period_start(week) ->
     max(time_tracker_time:period_start(week), 0);
-period_t_start(Period, _UserId, _NowGsec) ->
-    time_tracker_time:period_start(Period).
+calendar_period_start(month) ->
+    time_tracker_time:period_start(month);
+calendar_period_start(year) ->
+    time_tracker_time:period_start(year).
 
 ts_to_gsec(T) when is_float(T) ->
     epoch_to_gregorian(erlang:round(T));

@@ -246,16 +246,16 @@ score_workday(_WorkdayDate, _TodayDate, _NowGsec, FirstInGsec, LastOutGsec, Shif
 
 classify_late_only(undefined, _ShiftStartGsec, _ShiftEndGsec, _ExclSecs) ->
     {1, 0, 0, 0, 0};
-classify_late_only(FirstInGsec, ShiftStartGsec, _ShiftEndGsec, ExclSecs) when is_integer(FirstInGsec) ->
-    HasComeExclusion = come_covered(FirstInGsec, ShiftStartGsec, ExclSecs),
+classify_late_only(FirstInGsec, ShiftStartGsec, ShiftEndGsec, ExclSecs) when is_integer(FirstInGsec) ->
+    LateDl = late_arrival_deadline_sec(ShiftStartGsec, ShiftEndGsec, ExclSecs),
     LateWithout =
         if
-            (FirstInGsec > ShiftStartGsec) andalso (not HasComeExclusion) -> 1;
+            FirstInGsec > LateDl -> 1;
             true -> 0
         end,
     LateWith =
         if
-            (FirstInGsec > ShiftStartGsec) andalso HasComeExclusion -> 1;
+            (FirstInGsec > ShiftStartGsec) andalso (FirstInGsec =< LateDl) -> 1;
             true -> 0
         end,
     {LateWithout, LateWith, 0, 0, 0}.
@@ -287,16 +287,25 @@ last_out_gsec(Sorted) ->
             lists:max(OutList)
     end.
 
-come_covered(FirstInGsec, ShiftStartGsec, ExclSecs) when is_integer(FirstInGsec) ->
-    ComeExclContainsFirstIn =
+late_arrival_deadline_sec(ShiftStartGsec, ShiftEndGsec, ExclSecs) ->
+    lists:foldl(
         fun
-            ({?EX_COME, ExclStart, ExclEnd}) when
-                ExclStart =< FirstInGsec, FirstInGsec =< ExclEnd ->
-                true;
-            (_) ->
-                false
+            ({?EX_COME, Es, Ee}, Acc) when Es =< Ee ->
+                case intervals_overlap_gsec(Es, Ee, ShiftStartGsec, ShiftEndGsec) of
+                    true ->
+                        erlang:max(Acc, Ee);
+                    false ->
+                        Acc
+                end;
+            (_, Acc) ->
+                Acc
         end,
-    (FirstInGsec =< ShiftStartGsec) orelse lists:any(ComeExclContainsFirstIn, ExclSecs).
+        ShiftStartGsec,
+        ExclSecs
+    ).
+
+intervals_overlap_gsec(A1, A2, B1, B2) when A1 =< A2, B1 =< B2 ->
+    not (A2 < B1 orelse B2 < A1).
 
 leave_covered(LastOutGsec, ShiftEndGsec, ExclSecs) when is_integer(LastOutGsec) ->
     LeaveExclContainsLastOut =
@@ -314,16 +323,16 @@ classify(_FirstInGsec, undefined, _ShiftStartGsec, _ShiftEndGsec, _ExclSecs) whe
     {0, 0, 1, 0, 0};
 classify(FirstInGsec, LastOutGsec, ShiftStartGsec, ShiftEndGsec, ExclSecs) when
     is_integer(FirstInGsec), is_integer(LastOutGsec) ->
-    HasComeExclusion = come_covered(FirstInGsec, ShiftStartGsec, ExclSecs),
+    LateDl = late_arrival_deadline_sec(ShiftStartGsec, ShiftEndGsec, ExclSecs),
     HasLeaveExclusion = leave_covered(LastOutGsec, ShiftEndGsec, ExclSecs),
     LateWithout =
         if
-            (FirstInGsec > ShiftStartGsec) andalso (not HasComeExclusion) -> 1;
+            FirstInGsec > LateDl -> 1;
             true -> 0
         end,
     LateWith =
         if
-            (FirstInGsec > ShiftStartGsec) andalso HasComeExclusion -> 1;
+            (FirstInGsec > ShiftStartGsec) andalso (FirstInGsec =< LateDl) -> 1;
             true -> 0
         end,
     EarlyWithout =

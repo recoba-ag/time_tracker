@@ -95,11 +95,15 @@ The evaluated interval is **\[WindowStart, Now\]** (inclusive in implementation 
 | `year` | January 1 of the **current year** 00:00:00 |
 | `all` | First known touch of the user, or `Now` if there are no touches |
 
+For `week`, `month`, and `year`, the real **WindowStart** is the **later** of the calendar boundary in the table and the user’s **first** `touch_events` row (`MIN(touched_at)`). Days before the user had any touch are not included in the stats (same idea as `all`, but still bounded by the chosen calendar period on the right).
+
 `Now` is the current time when the request is processed.
 
 ## Statistics: batch window (`/work_time/statistics`)
 
-The service reads the last `limit` rows from the global history table. The time range for all affected users is from the **earliest** to the **latest** `touched_at` among those rows (converted to the same internal “Gregorian seconds” time base as the rest of the app). Each user in that set gets a stats map for **their** touches and exclusions in that range.
+The service reads the last `limit` rows from the global history table. A **baseline** interval is from the **earliest** to the **latest** `touched_at` among those rows (converted to the same internal “Gregorian seconds” time base as the rest of the app). Touches and exclusions are loaded from the database for that full interval.
+
+For **each user**, attendance is evaluated from **max(baseline start, first touch)** to the baseline end, where **first touch** is `MIN(touched_at)` over all `touch_events` for that user (not only rows inside the batch sample). Same idea as clipping by first touch on `statistics_by_user`.
 
 ## Statistics: metric rules (`late_*`, `early_*`, `worked_days`)
 
@@ -119,7 +123,7 @@ A day is **included in scoring** if:
 
 **Exclusions (intervals in absolute time, same clock as touches):**
 
-- **`come later`**: if the first `in` time lies inside a `come later` row’s `[start, end]`, a late first-in is treated as **with reason** (not “late without”).
+- **`come later`**: intervals that **overlap the scheduled shift window** that day extend the **latest allowed first `in`** up to each row’s **`end` time** (`max` of shift start and those ends). First `in` **after** nominal `shift_start` but **on or before** that deadline counts as **late with reason** (`late_with_reason`). First `in` **after** the deadline counts as **late without reason** (`late_without_reason`).
 - **`leave earlier`**: if the last `out` lies inside a `leave earlier` row’s `[start, end]`, leaving before shift end is **with reason** (not “early without”).
 - Arriving **on or before** `shift_start` is never “late” for reason counting (including “on time by definition”).
 
@@ -127,8 +131,8 @@ A day is **included in scoring** if:
 
 | Field | Rule |
 |--------|------|
-| `late_without_reason` | First `in` is **strictly after** `shift_start`, and it is **not** excused by a `come later` interval containing that first `in` (and not already “on time” as above). If there is **no** `in` on that day, it counts as **1** in the no-show sense (no entry). |
-| `late_with_reason` | First `in` is after `shift_start`, and the `in` is **covered** by a `come later` exclusion. |
+| `late_without_reason` | First `in` is **strictly after** the **deadline** (see `come later` above: at least `shift_start`, or the **end** of overlapping `come later` rows if greater). If there is **no** `in` on that day, it counts as **1** in the no-show sense (no entry). |
+| `late_with_reason` | First `in` is **after** nominal `shift_start` but **not after** the deadline (allowed “come later” arrival). |
 | `early_without_reason` | After a finished evaluation: last `out` is **strictly before** `shift_end`, and the `out` is **not** in a `leave earlier` window; *or* (closed day) `in` exists but `out` is missing — treated as early leave without an approved reason. |
 | `early_with_reason` | Last `out` is before `shift_end`, and the `out` falls inside a `leave earlier` exclusion. |
 | `worked_days` | The day has both `in` and `out`, `late_without_reason` and `early_without_reason` for that day are both **0**, and `last_out >= first_in`. Free schedule / “no fixed hours” path uses a simpler pairing count (see code: `free_count`). |

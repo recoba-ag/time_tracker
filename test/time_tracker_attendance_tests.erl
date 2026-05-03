@@ -5,7 +5,10 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(D_WED, {2020, 6, 10}).
+-define(D_FRI, {2020, 6, 12}).
 -define(D_SAT, {2020, 6, 13}).
+
+schedule_8_17() -> {8 * 3600, 17 * 3600, [1, 2, 3, 4, 5], false}.
 
 day_base(D) -> calendar:datetime_to_gregorian_seconds({D, {0, 0, 0}}).
 
@@ -99,6 +102,21 @@ late_with_come_later_exclusion_test() ->
     ?assertEqual(1, maps:get(late_with_reason, M)),
     ?assertEqual(0, maps:get(early_without_reason, M)),
     ?assertEqual(1, maps:get(worked_days, M)).
+
+late_after_come_deadline_test() ->
+    {WS, WE} = window_single_day(?D_FRI),
+    Sch = schedule_8_17(),
+    Ex = [excl(<<"come later">>, ?D_FRI, 8, 0, 0, 9, 0, 0)],
+    ExSecs = time_tracker_attendance:build_exclusion_secs(Ex),
+    T = [
+        {at(?D_FRI, 9, 19, 0), in},
+        {at(?D_FRI, 17, 0, 0), out}
+    ],
+    M = time_tracker_attendance:compute(Sch, ExSecs, T, WS, WE),
+    ?assertEqual(1, maps:get(late_without_reason, M)),
+    ?assertEqual(0, maps:get(late_with_reason, M)),
+    ?assertEqual(0, maps:get(early_without_reason, M)),
+    ?assertEqual(0, maps:get(worked_days, M)).
 
 early_without_test() ->
     {WS, WE} = window_single_day(?D_WED),
