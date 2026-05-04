@@ -8,7 +8,7 @@
     list_cards_by_user/1,
     delete_all_cards_by_user/1,
     touch_card/1,
-    set_work_time/5,
+    set_work_time/6,
     get_work_time/1,
     add_exclusion/4,
     get_exclusion/1,
@@ -30,7 +30,8 @@
     start_time => term(),
     end_time => term(),
     days => term(),
-    free_schedule => term()
+    free_schedule => term(),
+    schedule_timezone => binary()
 }.
 -type exclusion_item() :: #{
     type_exclusion => binary(),
@@ -132,9 +133,11 @@ touch_card(CardUid) ->
             Error
     end.
 
--spec set_work_time(user_id(), term(), term(), term(), term()) -> {ok, #{user_id => user_id()}} | service_error().
-set_work_time(UserId, StartTime, EndTime, Days, Free) ->
-    SetWorkTimeRes = time_tracker_db:execute(?SET_USER_WORK_TIME, [UserId, StartTime, EndTime, Days, Free]),
+-spec set_work_time(user_id(), term(), term(), term(), term(), binary()) -> {ok, #{user_id => user_id()}} | service_error().
+set_work_time(UserId, StartTime, EndTime, Days, Free, ScheduleTimezone) ->
+    Tz = time_tracker_schedule:coerce_schedule_timezone_binary(ScheduleTimezone),
+    SetWorkTimeRes =
+        time_tracker_db:execute(?SET_USER_WORK_TIME, [UserId, StartTime, EndTime, Days, Free, Tz]),
     case SetWorkTimeRes of
         ok ->
             {ok, #{user_id => UserId}};
@@ -146,13 +149,15 @@ set_work_time(UserId, StartTime, EndTime, Days, Free) ->
 get_work_time(UserId) ->
     UserWorkTime = time_tracker_db:query(?GET_USER_WORK_TIME, [UserId]),
     case UserWorkTime of
-        {ok, [{StartTime, EndTime, Days, Free}]} ->
+        {ok, [{StartTime, EndTime, Days, Free, SchTz}]} ->
             {ok, #{
                 user_id => UserId,
                 start_time => StartTime,
                 end_time => EndTime,
                 days => Days,
-                free_schedule => Free
+                free_schedule => Free,
+                schedule_timezone =>
+                    time_tracker_schedule:coerce_schedule_timezone_binary(SchTz)
             }};
         {ok, []} ->
             {error, not_found, <<"Schedule not found">>};
@@ -160,14 +165,46 @@ get_work_time(UserId) ->
             Error
     end.
 
--spec add_exclusion(user_id(), binary(), term(), term()) -> {ok, #{user_id => user_id()}} | service_error().
-add_exclusion(UserId, Type, StartDt, EndDt) ->
-    AddRes = time_tracker_db:execute(?ADD_USER_EXCLUSION, [UserId, Type, StartDt, EndDt]),
-    case AddRes of
-        ok ->
-            {ok, #{user_id => UserId}};
+-spec add_exclusion(user_id(), binary(), calendar:datetime(), calendar:datetime()) ->
+    {ok, #{user_id => user_id()}} | service_error().
+add_exclusion(UserId, Type, StartWall, EndWall) ->
+    ScheduleTzBin = exclusion_schedule_tz(UserId),
+    case time_tracker_schedule:wall_pair_to_timestamptz(StartWall, EndWall, ScheduleTzBin) of
+        {ok, {StartDt, EndDt}} ->
+            case exclusion_order_ok(StartDt, EndDt) of
+                true ->
+                    AddRes =
+                        time_tracker_db:execute(?ADD_USER_EXCLUSION, [UserId, Type, StartDt, EndDt]),
+                    case AddRes of
+                        ok ->
+                            {ok, #{user_id => UserId}};
+                        {error, _Code, _Reason} = Error ->
+                            Error
+                    end;
+                false ->
+                    {error, validation_error, #{<<"range">> => <<"END_BEFORE_START">>}}
+            end;
         {error, _Code, _Reason} = Error ->
             Error
+    end.
+
+exclusion_schedule_tz(UserId) ->
+    case time_tracker_db:query(?GET_USER_WORK_TIME, [UserId]) of
+        {ok, [{_, _, _, _, TzSch}]} ->
+            time_tracker_schedule:coerce_schedule_timezone_binary(TzSch);
+        _ ->
+            <<"UTC">>
+    end.
+
+exclusion_order_ok(StartDt, EndDt) ->
+    case {
+        time_tracker_time:datetime_to_gregorian(StartDt),
+        time_tracker_time:datetime_to_gregorian(EndDt)
+    } of
+        {{ok, GStart}, {ok, GEnd}} ->
+            GStart =< GEnd;
+        _ ->
+            false
     end.
 
 -spec get_exclusion(user_id()) -> {ok, #{user_id => user_id(), exclusions => [exclusion_item()]}} | service_error().
@@ -379,8 +416,9 @@ epoch_to_gregorian(EpochSec) ->
 
 schedule_map(Rows) ->
     AddUserScheduleToMap =
-        fun({Uid, S, E, D, F}, M) when is_integer(Uid) ->
-            case time_tracker_attendance:parse_schedule({S, E, D, F}) of
+        fun({Uid, S, E, D, F, Tz0}, M) when is_integer(Uid) ->
+            Tz = time_tracker_schedule:coerce_schedule_timezone_binary(Tz0),
+            case time_tracker_attendance:parse_schedule({S, E, D, F, Tz}) of
                 {ok, P} -> M#{Uid => P};
                 {error, _} -> M#{Uid => undefined}
             end

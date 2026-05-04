@@ -38,18 +38,19 @@
 >>).
 
 -define(SET_USER_WORK_TIME, <<
-    "INSERT INTO work_schedules(user_id, start_time, end_time, days, free_schedule, updated_at) "
-    "VALUES ($1, $2::time, $3::time, $4::smallint[], $5, NOW()) "
+    "INSERT INTO work_schedules(user_id, start_time, end_time, days, free_schedule, schedule_timezone, updated_at) "
+    "VALUES ($1, $2::time, $3::time, $4::smallint[], $5, $6, NOW()) "
     "ON CONFLICT(user_id) DO UPDATE SET "
     "start_time = EXCLUDED.start_time, "
     "end_time = EXCLUDED.end_time, "
     "days = EXCLUDED.days, "
     "free_schedule = EXCLUDED.free_schedule, "
+    "schedule_timezone = EXCLUDED.schedule_timezone, "
     "updated_at = NOW()"
 >>).
 
 -define(GET_USER_WORK_TIME, <<
-    "SELECT start_time::text, end_time::text, days, free_schedule "
+    "SELECT start_time::text, end_time::text, days, free_schedule, schedule_timezone "
     "FROM work_schedules WHERE user_id = $1"
 >>).
 
@@ -120,8 +121,39 @@
 >>).
 
 -define(GET_WORK_SCHEDULES_FOR_USERS, <<
-    "SELECT user_id, start_time::text, end_time::text, days, free_schedule "
+    "SELECT user_id, start_time::text, end_time::text, days, free_schedule, schedule_timezone "
     "FROM work_schedules WHERE user_id = ANY($1::bigint[])"
+>>).
+
+-define(PG_TIMEZONE_EXISTS, <<
+    "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_timezone_names WHERE name = $1::text)"
+>>).
+
+-define(WINDOW_LOCAL_DATES_FROM_UNIX, <<
+    "SELECT timezone($3::text, to_timestamp($1::double precision))::date AS d0, "
+    "timezone($3::text, to_timestamp($2::double precision))::date AS d1"
+>>).
+
+-define(SHIFT_BOUNDS_LOCAL_SERIES, <<
+    "SELECT wd::date, "
+    "extract(epoch FROM ((wd::date)::timestamp + ($3::bigint * interval '1 second')) AT TIME ZONE $4::text)::double precision AS ss, "
+    "extract(epoch FROM ((wd::date)::timestamp + ($5::bigint * interval '1 second')) AT TIME ZONE $4::text)::double precision AS se "
+    "FROM generate_series($1::date, $2::date, interval '1 day') AS wd"
+>>).
+
+-define(TOUCH_EVENTS_LOCAL_DATES, <<
+    "SELECT timezone($2::text, to_timestamp(epoch))::date "
+    "FROM unnest($1::double precision[]) AS epoch"
+>>).
+
+-define(LOCAL_DATE_AT_UNIX, <<
+    "SELECT timezone($2::text, to_timestamp($1::double precision))::date"
+>>).
+
+-define(WALL_PAIR_TO_TIMESTAMPTZ, <<
+    "SELECT "
+    "(make_timestamp($1::int, $2::int, $3::int, $4::int, $5::int, $6::float8)::timestamp AT TIME ZONE $13::text) AS ts0, "
+    "(make_timestamp($7::int, $8::int, $9::int, $10::int, $11::int, $12::float8)::timestamp AT TIME ZONE $13::text) AS ts1"
 >>).
 
 -define(GET_NEXT_EVENT_TYPE_BY_USER, <<

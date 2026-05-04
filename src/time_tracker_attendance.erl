@@ -22,7 +22,7 @@
 -export_type([stats_map/0, work_schedule/0, touch_gsec/0, exclusion_gsec/0, exclusion_db_row/0, touch_db_row/0]).
 
 -type work_schedule() ::
-    {non_neg_integer(), non_neg_integer(), [1..7], false}
+    {non_neg_integer(), non_neg_integer(), [1..7], false, binary()}
     | {0, 0, [], true}.
 
 -type touch_gsec() :: {time_tracker_time:gregorian_sec(), in | out}.
@@ -34,13 +34,18 @@
 -spec parse_schedule(tuple()) -> {ok, work_schedule()} | {error, bad_schedule}.
 parse_schedule({_StartBin, _EndBin, _DbDays, true}) ->
     {ok, {0, 0, [], true}};
+parse_schedule({_StartBin, _EndBin, _DbDays, true, _Tz}) ->
+    {ok, {0, 0, [], true}};
 parse_schedule({StartBin, EndBin, WorkdaysDb, false}) when is_binary(StartBin) ->
+    parse_schedule({StartBin, EndBin, WorkdaysDb, false, <<"UTC">>});
+parse_schedule({StartBin, EndBin, WorkdaysDb, false, Tz0}) when is_binary(StartBin) ->
+    Tz = time_tracker_schedule:coerce_schedule_timezone_binary(Tz0),
     case {time_tracker_time:parse_time(StartBin), time_tracker_time:parse_time(EndBin)} of
         {{ok, StartHms}, {ok, EndHms}} when StartHms < EndHms ->
             SecFromMidnightStart = time_tracker_time:to_seconds(StartHms),
             SecFromMidnightEnd = time_tracker_time:to_seconds(EndHms),
             WorkdayNumbers = normalize_days(WorkdaysDb),
-            {ok, {SecFromMidnightStart, SecFromMidnightEnd, WorkdayNumbers, false}};
+            {ok, {SecFromMidnightStart, SecFromMidnightEnd, WorkdayNumbers, false, Tz}};
         _ ->
             {error, bad_schedule}
     end;
@@ -91,19 +96,45 @@ compute(undefined, _ExclSecs, _Touches, _WindowStart, _WindowEnd) ->
     empty(0);
 compute({0, 0, _, true}, _ExclSecs, Touches, WindowStart, WindowEnd) ->
     empty(free_count(Touches, WindowStart, WindowEnd));
+compute({SecFromMidnightStart, SecFromMidnightEnd, WorkdayNumbers, false, TzBin},
+    ExclSecs, Touches, WindowStart, WindowEnd) when SecFromMidnightStart < SecFromMidnightEnd,
+    WindowStart =< WindowEnd ->
+    case time_tracker_schedule:tz_equals_utc(TzBin) of
+        true ->
+            compute_fixed_utc(
+                SecFromMidnightStart, SecFromMidnightEnd,
+                WorkdayNumbers, ExclSecs, Touches, WindowStart, WindowEnd
+            );
+        false ->
+            compute_fixed_non_utc_tz(
+                SecFromMidnightStart, SecFromMidnightEnd,
+                WorkdayNumbers, ExclSecs, Touches,
+                WindowStart, WindowEnd, TzBin
+            )
+    end;
 compute({SecFromMidnightStart, SecFromMidnightEnd, WorkdayNumbers, false},
     ExclSecs, Touches, WindowStart, WindowEnd) when SecFromMidnightStart < SecFromMidnightEnd,
     WindowStart =< WindowEnd ->
+    compute(
+        {SecFromMidnightStart, SecFromMidnightEnd, WorkdayNumbers, false, <<"UTC">>},
+        ExclSecs,
+        Touches,
+        WindowStart,
+        WindowEnd
+    );
+compute(_Schedule, _ExclSecs, _Touches, _WindowStart, _WindowEnd) -> empty(0).
+
+compute_fixed_utc(SecMidStart, SecMidEnd, WorkdayNumbers, ExclSecs, Touches, WindowStart, WindowEnd) ->
     NowGsec = time_tracker_time:now_gregorian_sec(),
     TouchesByWorkday = touches_by_workday(Touches, WindowStart, WindowEnd),
     {FirstDateInWindow, LastDateInWindow} = {date_ceil(WindowStart), date_floor(WindowEnd)},
     TodayDate = date_of_greg(NowGsec),
-    StepOneWorkdayOnRange =
+    Step =
         fun(WorkdayDate, Accum) ->
-            step(
+            step_via_local_midnight_utc_calendar(
                 WorkdayDate,
-                SecFromMidnightStart,
-                SecFromMidnightEnd,
+                SecMidStart,
+                SecMidEnd,
                 WorkdayNumbers,
                 ExclSecs,
                 TouchesByWorkday,
@@ -114,9 +145,94 @@ compute({SecFromMidnightStart, SecFromMidnightEnd, WorkdayNumbers, false},
                 Accum
             )
         end,
-    DateRange = date_range(FirstDateInWindow, LastDateInWindow),
-    lists:foldl(StepOneWorkdayOnRange, empty(0), DateRange);
-compute(_Schedule, _ExclSecs, _Touches, _WindowStart, _WindowEnd) -> empty(0).
+    lists:foldl(
+        Step, empty(0), date_range(FirstDateInWindow, LastDateInWindow)
+    ).
+
+compute_fixed_non_utc_tz(
+    SecMidStart, SecMidEnd, WorkdayNumbers, ExclSecs, Touches,
+    WindowStart, WindowEnd, TzBin
+) ->
+    NowGsec = time_tracker_time:now_gregorian_sec(),
+    case time_tracker_schedule:window_local_dates(WindowStart, WindowEnd, TzBin) of
+        {ok, {FirstLocal, LastLocal}} ->
+            case time_tracker_schedule:shift_bounds_epoch_map(
+                FirstLocal, LastLocal, SecMidStart, SecMidEnd, TzBin
+            ) of
+                {ok, BoundsMap} ->
+                    case time_tracker_schedule:touches_by_local_workday_map(
+                        WindowStart, WindowEnd, Touches, TzBin
+                    ) of
+                        {ok, TouchesByLocalDay} ->
+                            case time_tracker_schedule:local_date_from_gregorian_sec(NowGsec, TzBin) of
+                                {ok, TodayLocal} ->
+                                    Step =
+                                        fun(WorkdayDate, Accum) ->
+                                            case maps:get(WorkdayDate, BoundsMap, undefined) of
+                                                undefined ->
+                                                    Accum;
+                                                {ShiftStartGsec, ShiftEndGsec} ->
+                                                    evaluate_workday(
+                                                        WorkdayDate,
+                                                        ShiftStartGsec,
+                                                        ShiftEndGsec,
+                                                        WorkdayNumbers,
+                                                        ExclSecs,
+                                                        TouchesByLocalDay,
+                                                        WindowStart,
+                                                        WindowEnd,
+                                                        NowGsec,
+                                                        TodayLocal,
+                                                        Accum
+                                                    )
+                                            end
+                                        end,
+                                    lists:foldl(
+                                        Step,
+                                        empty(0),
+                                        date_range(FirstLocal, LastLocal)
+                                    );
+                                {error, _, _} ->
+                                    empty(0)
+                            end;
+                        {error, _, _} ->
+                            empty(0)
+                    end;
+                {error, _, _} ->
+                    empty(0)
+            end;
+        {error, _, _} ->
+            empty(0)
+    end.
+
+step_via_local_midnight_utc_calendar(
+    WorkdayDate,
+    SecFromMidnightStart,
+    SecFromMidnightEnd,
+    WorkdayNumbers,
+    ExclSecs,
+    TouchesByWorkday,
+    WindowStart,
+    WindowEnd,
+    NowGsec,
+    TodayDate,
+    Accum
+) ->
+    ShiftStartGsec = day_midnight_greg(WorkdayDate) + SecFromMidnightStart,
+    ShiftEndGsec = day_midnight_greg(WorkdayDate) + SecFromMidnightEnd,
+    evaluate_workday(
+        WorkdayDate,
+        ShiftStartGsec,
+        ShiftEndGsec,
+        WorkdayNumbers,
+        ExclSecs,
+        TouchesByWorkday,
+        WindowStart,
+        WindowEnd,
+        NowGsec,
+        TodayDate,
+        Accum
+    ).
 
 empty(WorkedDaysInit) ->
     #{
@@ -173,10 +289,10 @@ date_add_one_day({Year, Mon, Day}) ->
 
 day_midnight_greg(WorkdayDate) -> calendar:datetime_to_gregorian_seconds({WorkdayDate, {0, 0, 0}}).
 
-step(
+evaluate_workday(
     WorkdayDate,
-    SecFromMidnightStart,
-    SecFromMidnightEnd,
+    ShiftStartGsec,
+    ShiftEndGsec,
     WorkdayNumbers,
     ExclSecs,
     TouchesByWorkday,
@@ -190,8 +306,6 @@ step(
         false ->
             Acc;
         true ->
-            ShiftStartGsec = day_midnight_greg(WorkdayDate) + SecFromMidnightStart,
-            ShiftEndGsec = day_midnight_greg(WorkdayDate) + SecFromMidnightEnd,
             if
                 ShiftStartGsec > WindowEnd; ShiftEndGsec < WindowStart; ShiftStartGsec >= ShiftEndGsec -> Acc;
                 true ->

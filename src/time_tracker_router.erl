@@ -45,7 +45,8 @@ handle(<<"/work_time/set">>, Args) ->
     EndTime = maps:get(<<"end_time">>, Args),
     Days = maps:get(<<"days">>, Args),
     Free = maps:get(<<"free_schedule">>, Args),
-    time_tracker_service:set_work_time(UserId, StartTime, EndTime, Days, Free);
+    SchTz = maps:get(<<"schedule_timezone">>, Args),
+    time_tracker_service:set_work_time(UserId, StartTime, EndTime, Days, Free, SchTz);
 
 handle(<<"/work_time/get">>, Args) ->
     UserId = maps:get(<<"user_id">>, Args),

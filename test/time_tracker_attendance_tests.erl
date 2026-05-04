@@ -8,13 +8,13 @@
 -define(D_FRI, {2020, 6, 12}).
 -define(D_SAT, {2020, 6, 13}).
 
-schedule_8_17() -> {8 * 3600, 17 * 3600, [1, 2, 3, 4, 5], false}.
+schedule_8_17() -> {8 * 3600, 17 * 3600, [1, 2, 3, 4, 5], false, <<"UTC">>}.
 
 day_base(D) -> calendar:datetime_to_gregorian_seconds({D, {0, 0, 0}}).
 
 at(D, H, M, S) -> day_base(D) + H * 3600 + M * 60 + S.
 
-schedule_9_18() -> {9 * 3600, 18 * 3600, [1, 2, 3, 4, 5], false}.
+schedule_9_18() -> {9 * 3600, 18 * 3600, [1, 2, 3, 4, 5], false, <<"UTC">>}.
 
 window_single_day(D) ->
     B = day_base(D),

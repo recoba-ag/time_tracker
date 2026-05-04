@@ -70,20 +70,27 @@ now_gregorian_sec() ->
     calendar:datetime_to_gregorian_seconds(calendar:universal_time()).
 
 -spec datetime_to_gregorian(calendar:datetime() | term()) -> {ok, gregorian_sec()} | parse_error().
-datetime_to_gregorian({{Y, Mo, D}, T}) when is_tuple(T), tuple_size(T) =:= 3 ->
-    {H, Mi, S} = T,
-    S2 = if
-        is_float(S) -> trunc(S);
-        is_integer(S) -> S;
-        true -> 0
-    end,
-    try calendar:datetime_to_gregorian_seconds({{Y, Mo, D}, {H, Mi, S2}}) of
-        Gs -> {ok, Gs}
-    catch
-        _:_ -> error
-    end;
+datetime_to_gregorian({{Y, Mo, D}, {H, Mi, S}}) ->
+    datetime_parts_to_gregorian(Y, Mo, D, H, Mi, S);
+datetime_to_gregorian({{Y, Mo, D}, {H, Mi, S, _Us}}) ->
+    datetime_parts_to_gregorian(Y, Mo, D, H, Mi, S);
 datetime_to_gregorian(_) ->
     error.
+
+datetime_parts_to_gregorian(Y, Mo, D, H, Mi, S) ->
+    S2 =
+        if
+            is_float(S) -> trunc(S);
+            is_integer(S) -> S;
+            true -> 0
+        end,
+    try calendar:datetime_to_gregorian_seconds({{Y, Mo, D}, {H, Mi, S2}}) of
+        Gs ->
+            {ok, Gs}
+    catch
+        _:_ ->
+            error
+    end.
 
 -spec parse_iso8601(binary()) -> {ok, calendar:datetime()} | parse_error().
 parse_iso8601(Bin) when is_binary(Bin) ->
@@ -91,57 +98,38 @@ parse_iso8601(Bin) when is_binary(Bin) ->
         <<Y:4/binary, "-", Mo:2/binary, "-", D:2/binary,
             "T",
             H:2/binary, ":", Mi:2/binary, ":", S:2/binary,
-            Sign, TZH:2/binary, ":", TZM:2/binary>> when Sign == $+; Sign == $- ->
-
-            case parse_parts(Y, Mo, D, H, Mi, S, TZH, TZM) of
-                {ok, {{Yy,Mo1,Dd},{Hh,Mm,Ss}}, {Tzh,Tzm}} ->
-                    OffsetSec = Tzh * 3600 + Tzm * 60,
-                    Offset = case Sign of
-                                 $+ -> OffsetSec;
-                                 $- -> -OffsetSec
-                             end,
-                    {ok, apply_offset({{Yy,Mo1,Dd},{Hh,Mm,Ss}}, Offset)};
-                error ->
-                    error
+            Sign, _:2/binary, ":", _:2/binary>> when Sign == $+; Sign == $- ->
+            case parse_datetime(Y, Mo, D, H, Mi, S) of
+                {ok, DT} -> {ok, DT};
+                error -> error
             end;
-
         <<Y:4/binary, "-", Mo:2/binary, "-", D:2/binary,
             "T",
             H:2/binary, ":", Mi:2/binary, ":", S:2/binary,
             "Z">> ->
-
-            case parse_parts(Y, Mo, D, H, Mi, S, <<"00">>, <<"00">>) of
-                {ok, DT, _} -> {ok, DT};
+            case parse_datetime(Y, Mo, D, H, Mi, S) of
+                {ok, DT} -> {ok, DT};
                 error -> error
             end;
-
         _ ->
             error
     end;
 parse_iso8601(_) ->
     error.
 
-parse_parts(Y, Mo, D, H, Mi, S, TZH, TZM) ->
-    case {to_int(Y), to_int(Mo), to_int(D),
-        to_int(H), to_int(Mi), to_int(S),
-        to_int(TZH), to_int(TZM)} of
-        {Yy,Mo1,Dd,Hh,Mm,Ss,Tzh,Tzm} when
+parse_datetime(Y, Mo, D, H, Mi, S) ->
+    case {to_int(Y), to_int(Mo), to_int(D), to_int(H), to_int(Mi), to_int(S)} of
+        {Yy, Mo1, Dd, Hh, Mm, Ss} when
             Yy > 0,
             Mo1 >= 1, Mo1 =< 12,
             Dd >= 1, Dd =< 31,
             Hh >= 0, Hh < 24,
             Mm >= 0, Mm < 60,
-            Ss >= 0, Ss < 60,
-            Tzh >= 0, Tzh =< 14,
-            Tzm >= 0, Tzm < 60 ->
-            {ok, {{Yy,Mo1,Dd},{Hh,Mm,Ss}}, {Tzh,Tzm}};
+            Ss >= 0, Ss < 60 ->
+            {ok, {{Yy, Mo1, Dd}, {Hh, Mm, Ss}}};
         _ ->
             error
     end.
-
-apply_offset(DateTime, OffsetSeconds) ->
-    GS = calendar:datetime_to_gregorian_seconds(DateTime),
-    calendar:gregorian_seconds_to_datetime(GS - OffsetSeconds).
 
 to_int(B) ->
     case catch binary_to_integer(B) of

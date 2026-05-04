@@ -64,8 +64,8 @@ Success response: `data` is the payload for that method (object, array, or neste
 | `/card/delete` | Remove card |
 | `/card/list_by_user` | List cards for user |
 | `/card/delete_all_by_user` | Remove all user cards |
-| `/work_time/set` | Set work schedule |
-| `/work_time/get` | Get work schedule |
+| `/work_time/set` | Set work schedule (requires IANA `schedule_timezone`, validated against PostgreSQL `pg_timezone_names`) |
+| `/work_time/get` | Get work schedule (`schedule_timezone` included) |
 | `/work_time/add_exclusion` | Add exclusion (come later / leave earlier / full day) |
 | `/work_time/get_exclusion` | List exclusions for user |
 | `/work_time/history_by_user` | Touch history for one user |
@@ -84,7 +84,9 @@ Success response: `data` is the payload for that method (object, array, or neste
 
 ## Statistics: time window (`statistics_by_user`)
 
-All boundaries use **Erlang universal time** (aligned with **UTC** for “today” and week boundaries).
+`WindowStart`, `Now`, `week`/`month`/`year` clipping, and the **\[WindowStart, Now\]** window use **Erlang universal time** (**UTC**) on the absolute timeline.
+
+How touches and shifts are folded into scored **days** additionally depends on `schedule_timezone` when it is not UTC‑equivalent (see **Work schedule timezone** above).
 
 The evaluated interval is **\[WindowStart, Now\]** (inclusive in implementation via touch range and per-day steps).
 
@@ -105,6 +107,16 @@ The service reads the last `limit` rows from the global history table. A **basel
 
 For **each user**, attendance is evaluated from **max(baseline start, first touch)** to the baseline end, where **first touch** is `MIN(touched_at)` over all `touch_events` for that user (not only rows inside the batch sample). Same idea as clipping by first touch on `statistics_by_user`.
 
+## Work schedule timezone (`schedule_timezone`)
+
+`work_schedules.schedule_timezone` is an **IANA** name (`Europe/Kyiv`, `UTC`, …). Shift `start_time` / `end_time` are interpreted on each **local calendar date** in that zone, then converted internally to absolute instants for overlaps with exclusions and touches.
+
+If `schedule_timezone` is **`UTC`** (or other names treated as UTC in code, such as **`GMT`** / **`Etc/UTC`**), grouping by calendar day matches the legacy **UTC‑midnight day** semantics.
+
+If it is non‑UTC, **per‑day grouping** (“which touches belong to which workday”), shift bounds, and the meaning of **“today”** for deciding whether today is scored follow the **`schedule_timezone` calendar**.
+
+Period boundaries for **`statistics_by_user`** (`week` / `month` / `year` / clipping by first touch) still use Erlang universal time (**UTC**) as before; shift alignment and grouping use the timezone above when it is not UTC‑equivalent.
+
 ## Statistics: metric rules (`late_*`, `early_*`, `worked_days`)
 
 Metrics are computed only on **scheduled workdays** (weekday in the user’s `work_schedules.days`), and only for days where the **scheduled shift** `[shift_start, shift_end]` overlaps the statistics time window.  
@@ -112,16 +124,18 @@ If a **`full day`** exclusion fully covers the whole shift window for that day, 
 
 A day is **included in scoring** if:
 
-- it is a **calendar day before “today”** in UTC, or
-- it is **today** and the current time is **on or after the scheduled shift start** (so “today before shift” is not scored at all).
+- it is a **calendar day before “today”** in the user’s **schedule_timezone** calendar, or
+- it is **that calendar “today”** and the current time is **on or after the scheduled shift start** on the absolute timeline (so “today before shift” is not scored at all).
 
 **Touch semantics for the day** (in order):
 
-- **`first` `in`**: minimum timestamp among `in` events on that calendar day.
+- **`first` `in`**: minimum timestamp among `in` events on that calendar day (in **`schedule_timezone`**, unless it is UTC‑equivalent — then UTC).
 - **last `out`**: maximum timestamp among `out` events on that calendar day.
 - If **today** is still **before the scheduled end of the shift** and there is **no** `out` yet, only **late**-related fields are updated for that day; **early** and **worked** stay **0** (in-progress day).
 
-**Exclusions (intervals in absolute time, same clock as touches):**
+**`/work_time/add_exclusion`**: `start_datetime` and `end_datetime` must be ISO‑8601 with `Z` or `±HH:MM` suffix. Only the **numeric date and time digits** matter: they are interpreted as **local wall‑clock in `schedule_timezone`** (the user’s stored schedule zone). Offset suffixes are **not** used to define the stored instant — this prevents mismatches when clients send inconsistent offsets.
+
+**Exclusions (intervals as absolute timestamps after conversion above):**
 
 - **`come later`**: intervals that **overlap the scheduled shift window** that day extend the **latest allowed first `in`** up to each row’s **`end` time** (`max` of shift start and those ends). First `in` **after** nominal `shift_start` but **on or before** that deadline counts as **late with reason** (`late_with_reason`). First `in` **after** the deadline counts as **late without reason** (`late_without_reason`).
 - **`leave earlier`**: if the last `out` lies inside a `leave earlier` row’s `[start, end]`, leaving before shift end is **with reason** (not “early without”).

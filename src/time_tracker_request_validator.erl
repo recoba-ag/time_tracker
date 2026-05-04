@@ -55,7 +55,8 @@ validate(<<"/work_time/set">>, Params) ->
         <<"start_time">> => [required, string],
         <<"end_time">> => [required, string],
         <<"days">> => [required, not_empty_list, {list_of, [{number_between, [1, 7]}]}],
-        <<"free_schedule">> => [required, to_boolean]
+        <<"free_schedule">> => [required, to_boolean],
+        <<"schedule_timezone">> => [required, string]
     },
     case liver:validate(Schema, Params, #{return => map}) of
         {ok, Args} ->
@@ -123,7 +124,18 @@ validate_work_time(Args) ->
     EndTime = maps:get(<<"end_time">>, Args),
     case {time_tracker_time:parse_time(StartTime), time_tracker_time:parse_time(EndTime)} of
         {{ok, StartNorm}, {ok, EndNorm}} ->
-            {ok, Args#{<<"start_time">> => StartNorm, <<"end_time">> => EndNorm}};
+            case time_tracker_schedule:validate_timezone_name(maps:get(<<"schedule_timezone">>, Args)) of
+                ok ->
+                    {ok,
+                        Args#{
+                            <<"start_time">> => StartNorm,
+                            <<"end_time">> => EndNorm
+                        }};
+                {error, invalid_timezone, Msg} ->
+                    {error, #{<<"schedule_timezone">> => Msg}};
+                {error, _, _} ->
+                    {error, #{<<"schedule_timezone">> => <<"TIMEZONE_VALIDATE_FAILED">>}}
+            end;
         {error, _} ->
             {error, #{<<"start_time">> => <<"INVALID_TIME">>}};
         {_, error} ->
@@ -135,15 +147,10 @@ validate_exclusion_dt(Args) ->
     EndBin = maps:get(<<"end_datetime">>, Args),
     case {time_tracker_time:parse_iso8601(StartBin), time_tracker_time:parse_iso8601(EndBin)} of
         {{ok, StartDT}, {ok, EndDT}} ->
-            case StartDT =< EndDT of
-                true ->
-                    {ok, Args#{
-                        <<"start_datetime">> => StartDT,
-                        <<"end_datetime">> => EndDT
-                    }};
-                false ->
-                    {error, #{<<"range">> => <<"END_BEFORE_START">>}}
-            end;
+            {ok, Args#{
+                <<"start_datetime">> => StartDT,
+                <<"end_datetime">> => EndDT
+            }};
         {error, _} ->
             {error, #{<<"start_datetime">> => <<"INVALID_ISO8601">>}};
         {_, error} ->

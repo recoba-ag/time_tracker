@@ -14,3 +14,14 @@ period_start_order_test() ->
     Year = time_tracker_time:period_start(year),
     ?assert(Week >= Year),
     ?assert(Month >= Year).
+
+parse_iso8601_offset_not_shifted_test() ->
+    WallSame = <<"2026-05-01T08:30:05+07:00">>,
+    {ok, W} = time_tracker_time:parse_iso8601(WallSame),
+    Expected = {{2026, 5, 1}, {8, 30, 5}},
+    ?assertEqual(Expected, W),
+    {ok, FromZ} = time_tracker_time:parse_iso8601(<<"2026-05-01T08:30:05Z">>),
+    ?assertEqual(Expected, FromZ),
+    {ok, NegOff} = time_tracker_time:parse_iso8601(<<"2026-05-01T08:30:05-03:30">>),
+    ?assertEqual(Expected, NegOff),
+    error = time_tracker_time:parse_iso8601(<<"2026/05/01T08:30:05Z">>).

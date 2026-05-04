@@ -11,8 +11,11 @@ CREATE TABLE IF NOT EXISTS work_schedules (
     end_time TIME NOT NULL,
     days SMALLINT[] NOT NULL,
     free_schedule BOOLEAN NOT NULL DEFAULT FALSE,
+    schedule_timezone TEXT NOT NULL DEFAULT 'UTC',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE work_schedules ADD COLUMN IF NOT EXISTS schedule_timezone TEXT NOT NULL DEFAULT 'UTC';
 
 CREATE TABLE IF NOT EXISTS work_exclusions (
     id BIGSERIAL PRIMARY KEY,
