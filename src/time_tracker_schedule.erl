@@ -15,9 +15,11 @@
 
 -define(EPOCH_GREGORIAN, calendar:datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}})).
 
+-spec gregorian_to_unix_float(calendar:gregorian_seconds()) -> float().
 gregorian_to_unix_float(Gsec) ->
     float(Gsec - ?EPOCH_GREGORIAN).
 
+-spec epoch_seconds_to_gregorian(number()) -> calendar:gregorian_seconds().
 epoch_seconds_to_gregorian(Sec) ->
     ?EPOCH_GREGORIAN + erlang:round(Sec).
 
@@ -36,7 +38,7 @@ coerce_schedule_timezone_binary(Tz) when is_binary(Tz) ->
 coerce_schedule_timezone_binary(Tz) when is_list(Tz) ->
     coerce_schedule_timezone_binary(unicode:characters_to_binary(Tz)).
 
--spec tz_equals_utc(binary() | undefined | null) -> boolean().
+-spec tz_equals_utc(term()) -> boolean().
 tz_equals_utc(Tz0) ->
     Tz = coerce_schedule_timezone_binary(Tz0),
     case string:casefold(binary_to_list(Tz)) of
@@ -67,33 +69,38 @@ validate_timezone_name(TzRaw) ->
             end
     end.
 
+-spec trim_bin(binary()) -> binary().
 trim_bin(Bin) ->
     binary_ltrim(binary_rtrim(Bin)).
 
+-spec binary_rtrim(binary()) -> binary().
 binary_rtrim(B) ->
-    {_, R} = split_ws_rev(B),
-    binary:part(B, 0, byte_size(B) - R).
+    binary_rtrim(B, byte_size(B)).
 
+-spec binary_rtrim(binary(), non_neg_integer()) -> binary().
+binary_rtrim(B, Len) ->
+    case Len of
+        0 ->
+            B;
+        _ ->
+            Idx = Len - 1,
+            <<Prefix:Idx/binary, Ch:8>> = B,
+            case space_char(Ch) of
+                true -> binary_rtrim(Prefix, Idx);
+                false -> B
+            end
+    end.
+
+-spec binary_ltrim(binary()) -> binary().
 binary_ltrim(B) ->
     {_L, B2} = split_ws(B),
     B2.
 
-split_ws_rev(Bin) ->
-    split_ws_rev(Bin, 0, byte_size(Bin)).
-
-split_ws_rev(_Bin, C, 0) ->
-    {C, 0};
-split_ws_rev(Bin, C, Len) ->
-    Idx = Len - 1,
-    <<Prefix:Idx/binary, Ch:8>> = Bin,
-    case space_char(Ch) of
-        true -> split_ws_rev(Prefix, C + 1, Idx);
-        false -> {C, byte_size(Bin) - Idx - 1}
-    end.
-
+-spec split_ws(binary()) -> {non_neg_integer(), binary()}.
 split_ws(Bin) ->
     split_ws(Bin, 0).
 
+-spec split_ws(binary(), non_neg_integer()) -> {non_neg_integer(), binary()}.
 split_ws(<<>>, C) ->
     {C, <<>>};
 split_ws(<<Ch:8, Rest/bitstring>>, C) ->
@@ -102,6 +109,7 @@ split_ws(<<Ch:8, Rest/bitstring>>, C) ->
         false -> {C, <<Ch:8, Rest/bitstring>>}
     end.
 
+-spec space_char(byte()) -> boolean().
 space_char($\s) -> true;
 space_char($\t) -> true;
 space_char($\n) -> true;
@@ -124,6 +132,7 @@ window_local_dates(WindowStartGsec, WindowEndGsec, TzBin) ->
             E
     end.
 
+-spec calendar_sub(tuple()) -> calendar:date().
 calendar_sub({{Y, M, D}}) -> {Y, M, D};
 calendar_sub({Y, M, D}) -> {Y, M, D}.
 
@@ -240,6 +249,7 @@ wall_pair_to_timestamptz(
             E
     end.
 
+-spec float_maybe(number()) -> float().
 float_maybe(S) when is_integer(S) -> float(S);
 float_maybe(S) when is_float(S) -> S.
 
