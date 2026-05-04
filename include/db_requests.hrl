@@ -60,23 +60,33 @@
 >>).
 
 -define(GET_USER_EXCLUSION, <<
-    "SELECT type_exclusion, start_datetime::text, end_datetime::text "
-    "FROM work_exclusions "
-    "WHERE user_id = $1 "
-    "ORDER BY start_datetime DESC"
+    "SELECT e.type_exclusion, "
+    "to_char(timezone(COALESCE(w.schedule_timezone, 'UTC'), e.start_datetime), 'YYYY-MM-DD\"T\"HH24:MI:SS'), "
+    "to_char(timezone(COALESCE(w.schedule_timezone, 'UTC'), e.end_datetime), 'YYYY-MM-DD\"T\"HH24:MI:SS'), "
+    "COALESCE(w.schedule_timezone, 'UTC') "
+    "FROM work_exclusions e "
+    "LEFT JOIN work_schedules w ON w.user_id = e.user_id "
+    "WHERE e.user_id = $1 "
+    "ORDER BY e.start_datetime DESC"
 >>).
 
 -define(GET_HISTORY_BY_USER, <<
-    "SELECT card_uid, touched_at::text, event_type "
-    "FROM touch_events "
-    "WHERE user_id = $1 "
-    "ORDER BY touched_at DESC"
+    "SELECT t.card_uid, "
+    "to_char(timezone(COALESCE(w.schedule_timezone, 'UTC'), t.touched_at), 'YYYY-MM-DD\"T\"HH24:MI:SS'), "
+    "t.event_type "
+    "FROM touch_events t "
+    "LEFT JOIN work_schedules w ON w.user_id = t.user_id "
+    "WHERE t.user_id = $1 "
+    "ORDER BY t.touched_at DESC"
 >>).
 
 -define(GET_HISTORY, <<
-    "SELECT user_id, card_uid, touched_at::text, event_type "
-    "FROM touch_events "
-    "ORDER BY touched_at DESC "
+    "SELECT t.user_id, t.card_uid, "
+    "to_char(timezone(COALESCE(w.schedule_timezone, 'UTC'), t.touched_at), 'YYYY-MM-DD\"T\"HH24:MI:SS'), "
+    "t.event_type "
+    "FROM touch_events t "
+    "LEFT JOIN work_schedules w ON w.user_id = t.user_id "
+    "ORDER BY t.touched_at DESC "
     "LIMIT $1"
 >>).
 

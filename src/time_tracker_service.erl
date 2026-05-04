@@ -207,16 +207,28 @@ exclusion_order_ok(StartDt, EndDt) ->
             false
     end.
 
--spec get_exclusion(user_id()) -> {ok, #{user_id => user_id(), exclusions => [exclusion_item()]}} | service_error().
+-spec get_exclusion(user_id()) ->
+    {ok, #{user_id => user_id(), schedule_timezone => binary(), exclusions => [exclusion_item()]}} | service_error().
 get_exclusion(UserId) ->
     GetExclusionRes = time_tracker_db:query(?GET_USER_EXCLUSION, [UserId]),
     case GetExclusionRes of
         {ok, Rows} ->
+            SchTz =
+                case Rows of
+                    [] ->
+                        <<"UTC">>;
+                    [{_, _, _, Tz0} | _] ->
+                        time_tracker_schedule:coerce_schedule_timezone_binary(Tz0)
+                end,
             Ex = [
                 #{type_exclusion => ExclType, start_datetime => StartDt, end_datetime => EndDt}
-             || {ExclType, StartDt, EndDt} <- Rows
+             || {ExclType, StartDt, EndDt, _} <- Rows
             ],
-            {ok, #{user_id => UserId, exclusions => Ex}};
+            {ok, #{
+                user_id => UserId,
+                schedule_timezone => SchTz,
+                exclusions => Ex
+            }};
         {error, _Code, _Reason} = Error ->
             Error
     end.

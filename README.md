@@ -67,8 +67,8 @@ Success response: `data` is the payload for that method (object, array, or neste
 | `/work_time/set` | Set work schedule (requires IANA `schedule_timezone`, validated against PostgreSQL `pg_timezone_names`) |
 | `/work_time/get` | Get work schedule (`schedule_timezone` included) |
 | `/work_time/add_exclusion` | Add exclusion (come later / leave earlier / full day) |
-| `/work_time/get_exclusion` | List exclusions for user |
-| `/work_time/history_by_user` | Touch history for one user |
+| `/work_time/get_exclusion` | List exclusions for user (`start_datetime` / `end_datetime` as local wall time in `schedule_timezone`; see below) |
+| `/work_time/history_by_user` | Touch history for one user (`touched_at` in user’s `schedule_timezone`; see below) |
 | `/work_time/history` | Touch history, grouped by user (see below) |
 | `/work_time/statistics_by_user` | Attendance-style stats for one user and period |
 | `/work_time/statistics` | Stats for all users that appear in the last `limit` global history rows |
@@ -78,9 +78,15 @@ Success response: `data` is the payload for that method (object, array, or neste
 - **`/work_time/history_by_user`**: `data` is a single object:
   - `user_id` — user id
   - `events` — array of touch events, each with `user_id`, `card_uid`, `touched_at`, `event_type` (`"in"` / `"out"`)
+  - **`touched_at`** — wall clock in that user’s **`work_schedules.schedule_timezone`**, formatted `YYYY-MM-DDTHH:MM:SS` (no `Z` suffix; not UTC). If the user has no schedule row, **UTC** is used for display.
 - **`/work_time/history`**: `data` is a **list** of objects (no extra `history` wrapper):
   - `user_id` — user id
-  - `events` — same event objects as above
+  - `events` — same event objects as above (each `touched_at` uses **that** user’s schedule timezone from the join).
+
+### Exclusions list (`/work_time/get_exclusion`)
+
+- **`schedule_timezone`** — echo of the user’s IANA zone from `work_schedules` (or **`UTC`** if no row).
+- **`exclusions[].start_datetime` / `end_datetime`** — same local-wall `YYYY-MM-DDTHH:MM:SS` convention as `touched_at` above (the instant stored in the DB, shown in the schedule zone).
 
 ## Statistics: time window (`statistics_by_user`)
 
